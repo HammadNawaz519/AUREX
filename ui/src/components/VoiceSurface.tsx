@@ -347,7 +347,9 @@ export const VoiceSurface: React.FC = () => {
 
       if (state === 'LISTENING') {
         const base = idleEnvelope.current[i];
-        const ripple = Math.sin(norm * 14.0 - tickRef.current * 3.5) * 0.25;
+        const ripple =
+          Math.sin(norm * 12.0 - tickRef.current * 3.6) * 0.28 +
+          Math.cos(norm * 6.0 + tickRef.current * 2.1) * 0.08;
         amp = Math.max(0.08, Math.min(0.98, base * (0.85 + micLevel * 2.4) + ripple * micLevel));
       } else if (state === 'THINKING') {
         const wave1 = Math.sin(norm * 9.0 + tickRef.current * 2.6) * 0.35;
@@ -355,8 +357,9 @@ export const VoiceSurface: React.FC = () => {
         amp = Math.max(0.12, Math.min(0.92, 0.45 + wave1 + wave2));
       } else if (state === 'SPEAKING') {
         const vocal =
-          Math.sin(tickRef.current * 6.5 + i * 0.32) * 0.3 +
-          Math.sin(tickRef.current * 12.0 + i * 0.52) * 0.18;
+          Math.sin(tickRef.current * 6.0 + i * 0.35) * 0.26 +
+          Math.sin(tickRef.current * 11.5 + i * 0.55) * 0.14 +
+          Math.cos(tickRef.current * 3.2 + norm * 4.0) * 0.06;
         amp = Math.max(0.12, Math.min(0.98, idleEnvelope.current[i] * 1.35 + vocal));
       } else {
         amp = idleEnvelope.current[i] * 0.5;

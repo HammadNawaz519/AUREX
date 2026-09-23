@@ -115,14 +115,16 @@ class VoiceInteractionSurface(QWidget):
                 amp = self._idle_heights[i]
             elif self.state == AgentState.LISTENING:
                 base = self._idle_heights[i]
-                ripple = math.sin(norm * 14.0 - self.tick * 3.5) * 0.35
+                ripple = math.sin(norm * 12.0 - self.tick * 3.6) * 0.28 + math.cos(norm * 6.0 + self.tick * 2.1) * 0.08
                 amp = max(0.08, min(0.98, base * (1.0 + self.audio_level * 1.6) + ripple * self.audio_level))
             elif self.state == AgentState.THINKING:
                 wave1 = math.sin(norm * 9.0 + self.tick * 2.2) * 0.35
                 wave2 = math.cos(norm * 15.0 - self.tick * 3.2) * 0.2
                 amp = max(0.10, min(0.92, 0.4 + wave1 + wave2))
             elif self.state == AgentState.SPEAKING:
-                vocal = (math.sin(self.tick * 6.5 + i * 0.32) * 0.28 + math.sin(self.tick * 12.0 + i * 0.52) * 0.16)
+                vocal = (math.sin(self.tick * 6.0 + i * 0.35) * 0.26 +
+                         math.sin(self.tick * 11.5 + i * 0.55) * 0.14 +
+                         math.cos(self.tick * 3.2 + norm * 4.0) * 0.06)
                 amp = max(0.12, min(0.98, self._idle_heights[i] * 1.35 + vocal))
             elif self.state == AgentState.EXECUTING:
                 sweep = math.exp(-((norm - ((self.tick * 0.32) % 1.25)) ** 2) / 0.035)
