@@ -1,0 +1,294 @@
+================================================================================
+                       AUREX AGENT ARCHITECTURE & IMPLEMENTATION
+                 Autonomous Always-Available Desktop AI Assistant
+================================================================================
+
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. EXECUTIVE OVERVIEW & ARCHITECTURAL PHILOSOPHY
+2. TASK 1: DUAL-MODE VOICE SYSTEM (WAKE MODE VS ACTIVE CONVERSATION MODE)
+3. TASK 2: HARDWARE AUDIO CAPTURE & NON-BLOCKING CALLBACK MULTIPLEXER
+4. TASK 3: ACOUSTIC WAKE-WORD DETECTION & DOUBLE-CLAP GESTURE RECOGNITION
+5. TASK 4: CONTINUOUS MULTI-TURN CONVERSATION LOOP & SESSION MANAGEMENT
+6. TASK 5: ZERO-LATENCY BARGE-IN INTERRUPTION ("STOP" / "CANCEL" / "WAIT")
+7. TASK 6: FAST LOCAL COMMAND ROUTER (<150MS) VS CLOUD REASONING
+8. TASK 7: CONTEXTUAL SHORT-TERM MEMORY & ORDINAL RESOLUTION ("IT", "THAT")
+9. TASK 8: COMPUTER VISION, SCREEN PERCEPTION & UI ELEMENT MAPPING
+10. TASK 9: AUTONOMOUS TASK PLANNER & MULTI-STEP COMPUTER-USE ENGINE
+11. TASK 10: FLOATING DESKTOP SURFACE & WIN32 HWND_TOPMOST PINNING
+12. TASK 11: COMPACT PILL SHRINK MODE & DYNAMIC RESIZING GEOMETRY
+13. TASK 12: LUXURY FLUID HARMONIC WAVEFORM (REMOVAL OF ORB, SMOOTH LERP PHYSICS)
+14. TASK 13: WARM JARVIS NEURAL TTS & SAPI OFFLINE FALLBACK
+15. TASK 14: GROQ WHISPER STT & WEBM/WAV CONTAINER AUTO-DETECTION
+16. FILE-BY-FILE BREAKDOWN & RUNTIME MAP
+================================================================================
+
+
+1. EXECUTIVE OVERVIEW & ARCHITECTURAL PHILOSOPHY
+--------------------------------------------------------------------------------
+AUREX is designed as a personal, local-first computer agent inspired by JARVIS.
+Unlike traditional voice assistants (Siri, Google Assistant, Alexa) that force a
+stiff "Wake -> Command -> Shutdown" sequence, AUREX is built around a continuous
+conversational dialogue model:
+
+  [WAKE PHRASE / DOUBLE CLAP]
+             │
+             ▼
+    [ACTIVE CONVERSATION] ──(Multi-Turn Commands without repeating "Hey AUREX")
+             │
+      ┌──────┴──────────────────────────┐
+      ▼                                 ▼
+[Fast Local Actions]           [Complex Cloud AI Tasks]
+  "Open Chrome"                  "Read this assignment and plan the tasks"
+  "Mute volume"                  "Analyze my screen and click the button"
+  "Minimize all"
+      │                                 │
+      └──────────────┬──────────────────┘
+                     ▼
+       [Continuous Listening Stays Open]
+                     │
+     (Until "Stop", "Goodbye", or 30s Inactivity)
+
+
+2. TASK 1: DUAL-MODE VOICE SYSTEM (WAKE MODE VS ACTIVE CONVERSATION MODE)
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+Implemented in `app/desktop_widget.py` inside `AlwaysAvailableVoiceEngine`.
+
+Mode 1: WAKE MODE (Passive Listening)
+  - Purpose: Minimal CPU usage (~0.1%), zero cloud streaming, zero full speech
+    transcription.
+  - Monitors local microphone frames via callback.
+  - Evaluates audio for:
+      a) Double-clap gesture (acoustic energy spike pairs spaced 120ms - 750ms).
+      b) Wake phrases: "Hey AUREX", "AUREX", "Hey Rex", "Jarvis".
+  - Behavior: When triggered, immediately switches to Mode 2, triggers `come_up()`,
+    vocalizes "Yes, Hammad?", and opens a 30-second conversational session.
+
+Mode 2: ACTIVE CONVERSATION MODE
+  - Purpose: Full multi-turn conversational execution.
+  - The microphone remains continuously open.
+  - Every utterance is transcribed and executed sequentially:
+      User: "Open Chrome." -> AUREX: "Opening Chrome." -> Keeps listening.
+      User: "Now open my OS project." -> AUREX: "Opening your OS project." -> Keeps listening.
+      User: "Start terminal." -> AUREX: "Opening terminal." -> Keeps listening.
+  - The user NEVER has to repeat "Hey AUREX" between commands.
+  - Inactivity Timeout: 30 seconds. Refreshed on every successful exchange.
+  - Session Exit: Verbal ("Stop", "Goodbye", "Done", "Dismiss") or 30s timeout.
+
+
+3. TASK 2: HARDWARE AUDIO CAPTURE & NON-BLOCKING CALLBACK MULTIPLEXER
+--------------------------------------------------------------------------------
+PROBLEM SOLVED:
+Windows PortAudio was defaulting to Device 1 (MME driver), which delivered all
+zeros (`min: -1, max: 1, RMS: 0.48`) on Intel Smart Sound Digital Microphone
+Arrays. Furthermore, when using blocking reads (`stream.read()`), Windows WDM-KS
+threw `PaErrorCode -9999: 'Blocking API not supported yet'`.
+
+HOW IT WAS IMPLEMENTED:
+In `app/desktop_widget.py`:
+  1. Built `find_live_input_device()`:
+     Probes all available sound devices using lightweight callback verification.
+     Identifies live WASAPI inputs (Host API 3) with real acoustic energy (RMS > 4.0).
+  2. Converted to a non-blocking PortAudio callback stream (`InputStream(callback=...)`):
+     Runs on high-priority audio thread.
+     Downmixes stereo microphone input to 16-bit mono.
+     Pushes audio chunks to an asynchronous processing queue (`queue.Queue()`).
+     Zero blocking API errors, zero audio buffer drops, zero CPU spinning.
+
+
+4. TASK 3: ACOUSTIC WAKE-WORD DETECTION & DOUBLE-CLAP GESTURE RECOGNITION
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/voice/wakeword.py` & `app/desktop_widget.py`:
+  1. Wake Word Matching:
+     Added phonetic variant recognition in `WakeWordDetector.check_and_strip()`:
+     `aurex|orex|aurix|arex|orix|alrex|rex|jarvis|alex`
+     Handles Whisper phonetic mistranscriptions seamlessly.
+     Supports prefix patterns ("Hey AUREX ..."), direct wake ("AUREX"), and suffix
+     patterns ("... AUREX").
+  2. Double-Clap Gesture Detection:
+     Calculates instantaneous RMS in the audio callback.
+     A burst with RMS > 4.5x ambient noise floor records a clap timestamp.
+     If a second burst occurs within 120ms to 750ms, a double-clap is triggered.
+     Includes a 2.0-second cooldown to eliminate false re-triggers.
+
+
+5. TASK 4: CONTINUOUS MULTI-TURN CONVERSATION LOOP & SESSION MANAGEMENT
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/desktop_widget.py`:
+  1. Fast End-of-Speech VAD:
+     Reduced silence threshold from 700ms down to 300ms (3 consecutive 100ms blocks).
+     The exact moment user speech stops, audio is finalized and submitted to STT.
+  2. 30-Second Active Session Window:
+     `self.active_until = time.time() + 30.0`
+     While active, all transcribed speech is automatically routed as a direct command.
+     User speaks continuously; AUREX executes step-by-step.
+  3. Self-Voice Echo Muting:
+     Tracks `tts.is_speaking` to mute microphone input while AUREX speaks aloud,
+     preventing laptop speaker feedback loops.
+
+
+6. TASK 5: ZERO-LATENCY BARGE-IN INTERRUPTION ("STOP" / "CANCEL" / "WAIT")
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/voice/tts.py` & `app/desktop_widget.py`:
+  1. In `app/voice/tts.py`:
+     Added `stop()` method:
+     - Calls `sounddevice.stop()` (instantly halts hardware playback in 0ms).
+     - Clears the speech queue (`self._queue.queue.clear()`).
+     - Terminates any fallback PowerShell SAPI subprocess.
+     - Flags `self._interrupted = True` and sets `self._is_speaking = False`.
+  2. In `app/desktop_widget.py`:
+     When user says "STOP", "CANCEL", "NEVER MIND", "ABORT", or "WAIT":
+     - Immediately interrupts TTS.
+     - Vocalizes "Stopped, Hammad."
+     - Keeps active session alive, ready for new instructions.
+
+
+7. TASK 6: FAST LOCAL COMMAND ROUTER (<150MS) VS CLOUD REASONING
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/desktop_widget.py`, `app/server.py`, and `app/core/agent.py`:
+Simple desktop operations do NOT incur cloud LLM latency:
+
+  Local Intercept Patterns (<150ms execution):
+  - "Open <app>"        -> `open_application` tool via Windows shell/registry
+  - "Close <app>"       -> `close_application` tool (process termination)
+  - "Minimize all"      -> Windows Shell.Application MinimizeAll()
+  - "Mute / Unmute"     -> WScript.Shell SendKeys([char]173)
+  - "Take a screenshot" -> `capture_screen` tool
+  - "Shrink"            -> Collapses widget to compact pill
+  - "Expand"            -> Restores full card
+  - "Come front"        -> Pins on top of all windows via Win32 SetWindowPos
+
+  Cloud Reasoning (Groq 120B / Vision / Planner):
+  - Assignments, instructions, explanations, multi-step planning, screen OCR.
+
+
+8. TASK 7: CONTEXTUAL SHORT-TERM MEMORY & ORDINAL RESOLUTION ("IT", "THAT")
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/core/context.py` & `app/core/agent.py`:
+  1. `ConversationContext` maintains the last 10 conversational turns with tool
+     metadata, active file paths, target applications, and ordinal references.
+  2. Anaphora Resolution:
+     - "Open VS Code" -> active app = VS Code
+     - "Open my OS project" -> active path = D:\Projects\OS
+     - "Build it" -> resolves "it" = D:\Projects\OS
+     - "Run it" -> resolves "it" = build output
+  3. Semantic Memory (`app/memory/semantic_memory.py`):
+     Stores project locations, routines, and user preferences locally in JSON.
+
+
+9. TASK 8: COMPUTER VISION, SCREEN PERCEPTION & UI ELEMENT MAPPING
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/vision/screen_understanding.py`:
+  1. Full-screen capture via PIL / DirectX screen grab.
+  2. Window and UI hierarchy inspection via `pywinauto` and Win32 UIAutomation.
+  3. Identifies interactive elements: buttons, edit fields, tabs, links, icons.
+  4. Bounding box calculation for every visible element.
+  5. Screen context injected into LLM for visual reasoning ("What's on my screen?").
+
+
+10. TASK 9: AUTONOMOUS TASK PLANNER & MULTI-STEP COMPUTER-USE ENGINE
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/core/planner.py` & `app/core/agent.py`:
+  1. Decomposes multi-step tasks into structured plans:
+     `TaskPlan` containing an ordered list of `PlanStep`.
+  2. Step states: PENDING -> RUNNING -> COMPLETED / FAILED.
+  3. Autonomous execution loop with verification after each step.
+  4. Rollback and error recovery if a step fails.
+
+
+11. TASK 10: FLOATING DESKTOP SURFACE & WIN32 HWND_TOPMOST PINNING
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/desktop_widget.py`:
+  1. `FramelessDesktopWidget` built with PySide6 (`QWebEngineView`).
+  2. Translucent, borderless, frameless desktop tool window (`Qt.FramelessWindowHint | Qt.Tool`).
+  3. `come_up()` uses native Windows API:
+     `ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)`
+     Guarantees AUREX stays on top of full-screen Chrome, VS Code, and games.
+  4. Starts visible in the top-right corner on launch.
+
+
+12. TASK 11: COMPACT PILL SHRINK MODE & DYNAMIC RESIZING GEOMETRY
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/desktop_widget.py` & `ui/src/components/VoiceSurface.tsx`:
+  1. Full Card Mode: `384px × 195px` window.
+     Card: `348px` width, `24px` border radius, fully visible rounded bottom.
+  2. Shrunken Mode: `180px × 54px` window.
+     Pill: `164px × 42px`, `21px` border radius, glowing status dot + mini wave.
+  3. Verbal trigger: "Shrink", "Make small", "Compact mode".
+  4. Click pill or say "Expand" to restore full card.
+
+
+13. TASK 12: LUXURY FLUID HARMONIC WAVEFORM
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `ui/src/components/VoiceSurface.tsx`:
+  1. Completely removed the circular orb canvas as requested.
+  2. Built `PremiumFluidWave`:
+     - 44 vertical harmonic bars with a smooth Gaussian window envelope.
+     - Slow, unhurried harmonic animation speed (`0.016` ambient drift).
+     - Smooth mathematical interpolation (`lerp 0.09`) eliminating all erratic jitter.
+     - Luxury color gradient: Royal Indigo (`#6366f1`) -> Electric Violet (`#8b5cf6`) -> Vibrant Cyan (`#06b6d4`).
+
+
+14. TASK 13: WARM JARVIS NEURAL TTS & SAPI OFFLINE FALLBACK
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/voice/tts.py`:
+  1. Primary: Edge-TTS British neural voice (`en-GB-RyanNeural`):
+     - Pitch: `-2Hz` (deeper, warmer chest tone)
+     - Rate: `-3%` (natural, unhurried pace)
+     - Volume: `+10%`
+  2. Secondary Fallback: `en-GB-ThomasNeural`.
+  3. Offline Fallback: Windows PowerShell SAPI:
+     `(New-Object -ComObject SAPI.SpVoice).Speak('...')`
+     Zero variable expansion errors; works completely offline.
+  4. Sequential queue worker prevents audio overlaps.
+
+
+15. TASK 14: GROQ WHISPER STT & WEBM/WAV CONTAINER AUTO-DETECTION
+--------------------------------------------------------------------------------
+HOW IT WAS IMPLEMENTED:
+In `app/voice/speech.py`:
+  1. Inspects audio buffer magic bytes before submitting to Groq Whisper:
+     - Starts with `\x1a\x45\xdf\xa3` (EBML/WebM) -> `filename="audio.webm"`
+     - Starts with `RIFF` (WAV)                  -> `filename="audio.wav"`
+  2. Eliminates the Groq 400 `invalid_media_file` error when capturing from web.
+
+
+16. FILE-BY-FILE BREAKDOWN & RUNTIME MAP
+--------------------------------------------------------------------------------
+- `app/desktop_widget.py`:
+    Main entry point for desktop mode. Hosts PySide6 WebEngine view,
+    `find_live_input_device()`, `AlwaysAvailableVoiceEngine`, and Win32 window management.
+- `app/voice/tts.py`:
+    Text-to-speech engine with `stop()`, barge-in interruption, Edge-TTS, and SAPI.
+- `app/voice/speech.py`:
+    Groq Whisper transcription with auto-detected WebM/WAV container formats.
+- `app/voice/wakeword.py`:
+    Phonetic wake-word matching and double-clap energy detection.
+- `app/core/agent.py`:
+    Core agent loop, system prompt personalized to Hammad, tool execution,
+    context tracking, and AI routing.
+- `app/server.py`:
+    Local REST API on http://127.0.0.1:8765 serving static UI and endpoints.
+- `ui/src/components/VoiceSurface.tsx`:
+    TypeScript React surface featuring `PremiumFluidWave`, pill shrink mode,
+    and responsive state colors.
+- `ui/src/index.css`:
+    Centered transparent viewport ensuring rounded corners are never clipped.
+- `run_aurex.bat`:
+    One-click launcher for the AUREX desktop agent.
+
+================================================================================
+                              END OF SPECIFICATION
+================================================================================
