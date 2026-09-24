@@ -51,7 +51,7 @@ class ConversationManager:
         self.mic = mic_engine or get_microphone()
         self.stt = stt or get_stt()
         self.tts = tts or get_tts()
-        self.vad = vad or VoiceActivityDetector(silence_duration=0.45, min_utterance_duration=0.3)
+        self.vad = vad or VoiceActivityDetector(silence_duration=0.35, min_utterance_duration=0.25)
         self.wake = wake_engine or WakeEngine(stt_transcribe_func=self.stt.transcribe)
         self.router = local_router or FastLocalRouter()
         self.health = get_voice_health()
@@ -224,15 +224,8 @@ class ConversationManager:
             return
 
         # ── MODE B: ACTIVE CONVERSATION MODE ──────────────────────────────────
-        # During SPEAKING: Allow barge-in detection (energy check)
+        # During SPEAKING: Ignore microphone input so speaker output does not trigger false feedback loop
         if current_st == VoiceState.SPEAKING:
-            rms = float(np.sqrt(np.mean(mono_float ** 2)))
-            if rms > 0.12:  # User spoke loudly over TTS
-                logger.info("[AUREX VOICE] Barge-in speech energy detected during speech! Cutting off TTS.")
-                self.tts.stop()
-                self.state_machine.transition_to(VoiceState.INTERRUPTING)
-                self.state_machine.transition_to(VoiceState.LISTENING)
-                self.vad.reset()
             return
 
         # Normal LISTENING / RECORDING speech capture

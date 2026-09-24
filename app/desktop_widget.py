@@ -146,6 +146,8 @@ class FramelessDesktopWidget(QWebEngineView):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if self.conversation_manager and self.conversation_manager.tts.is_speaking:
+                self.conversation_manager.tts.stop()
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             if self._shrunken:
                 QTimer.singleShot(0, self.expand)
@@ -165,8 +167,12 @@ class FramelessDesktopWidget(QWebEngineView):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
             if self.conversation_manager:
-                logger.info("Push-to-talk triggered via Space bar.")
-                self.conversation_manager.activate_conversation(greeting="")
+                if self.conversation_manager.tts.is_speaking:
+                    logger.info("Interruption triggered via Space bar.")
+                    self.conversation_manager.tts.stop()
+                else:
+                    logger.info("Push-to-talk triggered via Space bar.")
+                    self.conversation_manager.activate_conversation(greeting="")
             event.accept()
             return
         super().keyPressEvent(event)

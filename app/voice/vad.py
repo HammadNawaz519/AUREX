@@ -32,12 +32,12 @@ class VoiceActivityDetector:
     def __init__(
         self,
         min_speech_frames: int = 2,
-        silence_duration: float = 0.45,
-        min_utterance_duration: float = 0.3,
-        max_utterance_duration: float = 15.0,
+        silence_duration: float = 0.35,
+        min_utterance_duration: float = 0.25,
+        max_utterance_duration: float = 12.0,
         pre_roll_duration: float = 0.3,
-        base_threshold: float = 0.015,
-        adaptive_multiplier: float = 2.2,
+        base_threshold: float = 0.012,
+        adaptive_multiplier: float = 2.0,
     ):
         self.min_speech_frames = min_speech_frames
         self.silence_duration = silence_duration

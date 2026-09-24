@@ -240,23 +240,29 @@ class MicrophoneEngine:
         elif data.dtype == np.uint8:
             return (data.astype(np.float32) - 128.0) / 128.0
         elif np.issubdtype(data.dtype, np.floating):
+            max_val = float(np.max(np.abs(data))) if len(data) > 0 else 0.0
+            if max_val > 1.5:
+                return data.astype(np.float32) / 32768.0
             return data.astype(np.float32)
         return data.astype(np.float32)
 
     def _process_raw_frame(self, raw_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Convert raw multi-channel input to mono float32 and mono int16."""
-        if raw_data.ndim > 1 and raw_data.shape[1] > 1:
-            raw_mono = raw_data.mean(axis=1)
-        else:
-            raw_mono = raw_data.flatten()
-
-        if raw_mono.dtype == np.int16:
-            mono_int16 = raw_mono
-            mono_float = raw_mono.astype(np.float32) / 32768.0
-        else:
-            mono_float = self._normalize_to_float(raw_mono)
+        """Convert raw multi-channel input to mono float32 [-1.0, 1.0] and mono int16 [-32768, 32767]."""
+        if raw_data.dtype == np.int16:
+            float_data = raw_data.astype(np.float32) / 32768.0
+            if float_data.ndim > 1 and float_data.shape[1] > 1:
+                mono_float = float_data.mean(axis=1).astype(np.float32)
+            else:
+                mono_float = float_data.flatten().astype(np.float32)
             mono_int16 = np.clip(mono_float * 32767.0, -32768, 32767).astype(np.int16)
+            return mono_float, mono_int16
 
+        norm = self._normalize_to_float(raw_data)
+        if norm.ndim > 1 and norm.shape[1] > 1:
+            mono_float = norm.mean(axis=1).astype(np.float32)
+        else:
+            mono_float = norm.flatten().astype(np.float32)
+        mono_int16 = np.clip(mono_float * 32767.0, -32768, 32767).astype(np.int16)
         return mono_float, mono_int16
 
     def stop(self):
