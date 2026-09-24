@@ -57,22 +57,27 @@ def sanitize_speech_text(text: str) -> str:
     # Remove URLs
     clean = re.sub(r"https?://\S+", "", clean)
 
-    # Detect terminal / shell output indicators
+    # Normalize unicode punctuation to safe ASCII equivalents
+    clean = clean.replace("—", " - ").replace("–", " - ")
+    clean = clean.replace("’", "'").replace("‘", "'")
+    clean = clean.replace("“", '"').replace("”", '"')
+    clean = clean.replace("\u202f", " ").replace("\u00a0", " ")
+
+    # Only treat as raw terminal stdout dump if there are multiple lines with explicit terminal signatures
     lines = [l.strip() for l in clean.splitlines() if l.strip()]
-    terminal_indicators = [
-        "exit code", "returncode", "stdout", "stderr", "ps ", "powershell", "cmd.exe",
-        "directory of", "bytes free", "compiling", "finished dev", "traceback",
-        "lastwritetime", "mode    length", "npm err", "pip install", "error: "
+    terminal_signatures = [
+        "lastwritetime", "mode    length", "cmd.exe", "powershell", "ps ", "ps c:", "ps d:",
+        "cargo build", "compiling ", "finished dev", "directory of", "bytes free",
+        "npm err!", "errno -", "fatal: not a git", "exit code:"
     ]
-    is_terminal = any(
-        any(ind in l.lower() for ind in terminal_indicators)
-        for l in lines
+    is_raw_terminal_dump = len(lines) >= 2 and any(
+        any(sig in l.lower() for sig in terminal_signatures) for l in lines
     )
-    if is_terminal:
-        if any("success" in l.lower() or "completed" in l.lower() or "0" in l.lower() or "finished" in l.lower() for l in lines):
+    if is_raw_terminal_dump:
+        if any("success" in l.lower() or "completed" in l.lower() or "0" in l.lower() for l in lines):
             return "Command executed successfully, Hammad."
         else:
-            return "Command finished with an error. Please check the terminal."
+            return "The command completed with an issue, Hammad."
 
     # Keep only natural sentences (first 2 short sentences, under 180 chars)
     sentences = re.split(r"(?<=[.!?])\s+", " ".join(lines))
@@ -82,7 +87,7 @@ def sanitize_speech_text(text: str) -> str:
         s_clean = s.strip()
         if not s_clean:
             continue
-        if total_len + len(s_clean) > 180:
+        if total_len + len(s_clean) > 200:
             break
         speakable.append(s_clean)
         total_len += len(s_clean)

@@ -165,22 +165,40 @@ class VoiceController:
             lower = user_text.lower().strip()
             reply = None
 
-            if any(p in lower for p in ["shrink", "make small", "pill", "pill mode", "pill shape", "collapse", "tiny mode"]):
+            if any(p in lower for p in [
+                "shrink", "make small", "pill", "pill mode", "pill shape",
+                "collapse", "tiny mode", "change to pill", "turn to pill",
+                "change into pill", "go small", "compact", "switch to pill",
+                "make it a pill", "make it pill"
+            ]):
                 if self.ui_action_handler:
                     self.ui_action_handler("shrink")
                 reply = "Shrinking to pill mode."
 
-            elif any(p in lower for p in ["expand", "make big", "box", "box mode", "box shape", "restore", "card mode", "full size"]):
+            elif any(p in lower for p in [
+                "expand", "make big", "box", "box mode", "box shape",
+                "restore", "card mode", "full size", "revert to box",
+                "change to box", "revert", "open box", "normal mode", "card shape"
+            ]):
                 if self.ui_action_handler:
                     self.ui_action_handler("expand")
                 reply = "Restoring full interface, Hammad."
 
-            elif any(p in lower for p in ["come up", "bring up", "come front", "come to front", "above all tabs", "front"]):
+            elif any(p in lower for p in [
+                "come up", "bring up", "come front", "come to front",
+                "above all tabs", "front", "bring to front", "on top",
+                "show front", "to the front", "bring forward", "forward"
+            ]):
                 if self.ui_action_handler:
                     self.ui_action_handler("come_up")
                 reply = "I am right here in front of all your tabs, Hammad."
 
-            elif any(p in lower for p in ["go back", "send to back", "hide behind", "wallpaper"]):
+            elif any(p in lower for p in [
+                "go back", "send to back", "hide behind", "wallpaper",
+                "desktop", "stick to wallpaper", "pin to wallpaper",
+                "to the back", "move to back", "behind windows", "behind tabs",
+                "back to wallpaper", "send to wallpaper"
+            ]):
                 if self.ui_action_handler:
                     self.ui_action_handler("go_back")
                 reply = "Pinned back to your desktop wallpaper, Hammad."

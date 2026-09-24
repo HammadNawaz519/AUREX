@@ -189,26 +189,33 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
                     trigger_widget_action("come_up")
                     response_text = "Yes Hammad."
                 elif any(p in lower_cmd for p in [
-                    "come up", "bring up", "come to front", "come front",
-                    "pop up", "wake up", "come here", "show yourself",
-                    "come above", "on top", "above all tabs", "whole all tab", "front"
+                    "come up", "bring up", "come front", "come to front",
+                    "above all tabs", "front", "bring to front", "on top",
+                    "show front", "to the front", "bring forward", "forward",
+                    "pop up", "wake up", "come here", "show yourself"
                 ]):
                     trigger_widget_action("come_up")
                     response_text = "I am right here in front of all your tabs, Hammad."
                 elif any(p in lower_cmd for p in [
-                    "go back", "send to back", "hide behind",
-                    "go to wallpaper", "back to wallpaper"
+                    "go back", "send to back", "hide behind", "wallpaper",
+                    "desktop", "stick to wallpaper", "pin to wallpaper",
+                    "to the back", "move to back", "behind windows", "behind tabs",
+                    "back to wallpaper", "send to wallpaper"
                 ]):
                     trigger_widget_action("go_back")
                     response_text = "Pinned back to your desktop wallpaper, Hammad."
                 elif any(p in lower_cmd for p in [
-                    "shrink", "make small", "minimize", "pill", "pill mode", "pill shape",
-                    "go small", "collapse", "tiny mode", "orb mode", "round", "circle", "make it round"
+                    "shrink", "make small", "pill", "pill mode", "pill shape",
+                    "collapse", "tiny mode", "change to pill", "turn to pill",
+                    "change into pill", "go small", "compact", "switch to pill",
+                    "make it a pill", "make it pill"
                 ]):
                     trigger_widget_action("shrink")
                     response_text = "Shrinking to pill mode."
                 elif any(p in lower_cmd for p in [
-                    "expand", "grow", "full size", "restore", "make big", "open", "card mode", "box", "box mode", "box shape"
+                    "expand", "make big", "box", "box mode", "box shape",
+                    "restore", "card mode", "full size", "revert to box",
+                    "change to box", "revert", "open box", "normal mode", "card shape"
                 ]):
                     trigger_widget_action("expand")
                     response_text = "Restoring full interface, Hammad."
@@ -274,26 +281,33 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
                     trigger_widget_action("come_up")
                     response_text = "Yes Hammad."
                 elif any(p in lower_trans for p in [
-                    "come up", "bring up", "come to front", "come front",
-                    "pop up", "wake up", "come here", "show yourself",
-                    "come above", "on top", "above all tabs", "whole all tab", "front"
+                    "come up", "bring up", "come front", "come to front",
+                    "above all tabs", "front", "bring to front", "on top",
+                    "show front", "to the front", "bring forward", "forward",
+                    "pop up", "wake up", "come here", "show yourself"
                 ]):
                     trigger_widget_action("come_up")
                     response_text = "I am right here in front of all your tabs, Hammad."
                 elif any(p in lower_trans for p in [
-                    "go back", "send to back", "hide behind",
-                    "go to wallpaper", "back to wallpaper"
+                    "go back", "send to back", "hide behind", "wallpaper",
+                    "desktop", "stick to wallpaper", "pin to wallpaper",
+                    "to the back", "move to back", "behind windows", "behind tabs",
+                    "back to wallpaper", "send to wallpaper"
                 ]):
                     trigger_widget_action("go_back")
                     response_text = "Pinned back to your desktop wallpaper, Hammad."
                 elif any(p in lower_trans for p in [
-                    "shrink", "make small", "minimize",
-                    "go small", "collapse", "tiny mode", "orb mode", "round", "circle", "make it round"
+                    "shrink", "make small", "pill", "pill mode", "pill shape",
+                    "collapse", "tiny mode", "change to pill", "turn to pill",
+                    "change into pill", "go small", "compact", "switch to pill",
+                    "make it a pill", "make it pill"
                 ]):
                     trigger_widget_action("shrink")
-                    response_text = "Shrinking to orb."
+                    response_text = "Shrinking to pill mode."
                 elif any(p in lower_trans for p in [
-                    "expand", "grow", "full size", "restore", "make big", "open", "card mode"
+                    "expand", "make big", "box", "box mode", "box shape",
+                    "restore", "card mode", "full size", "revert to box",
+                    "change to box", "revert", "open box", "normal mode", "card shape"
                 ]):
                     trigger_widget_action("expand")
                     response_text = "Restoring full interface, Hammad."

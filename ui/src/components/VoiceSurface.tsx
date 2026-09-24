@@ -183,7 +183,7 @@ const PremiumFluidWave: React.FC<WaveProps> = ({ state, analyser }) => {
 // ─── Main Component ──────────────────────────────────────────────────────────────
 export const VoiceSurface: React.FC = () => {
   const [state, setState] = useState<AState>('IDLE');
-  const [status, setStatus] = useState('Always listening...');
+  const [status, setStatus] = useState('Ready');
   const [query, setQuery] = useState('');
   const [reply, setReply] = useState('');
   const [shrunken, setShrunken] = useState(false);
@@ -201,7 +201,7 @@ export const VoiceSurface: React.FC = () => {
   // ─── Execute Command ─────────────────────────────────────────────────────────
   const executeCmd = useCallback(async (cmd: string) => {
     const clean = cmd.trim();
-    if (!clean) { setS('IDLE', 'Always listening...'); return; }
+    if (!clean) { setS('IDLE', 'Ready'); return; }
     setQuery(clean);
     setS('THINKING', 'Thinking...');
     try {
@@ -219,12 +219,12 @@ export const VoiceSurface: React.FC = () => {
       setS('SPEAKING', 'Speaking...');
       const wordCount = r.split(/\s+/).length;
       setTimeout(() => {
-        setS('IDLE', 'Always listening...');
+        setS('IDLE', 'Ready');
         setQuery('');
       }, Math.max(1800, wordCount * 350));
     } catch {
       setReply('Connection error.');
-      setS('IDLE', 'Always listening...');
+      setS('IDLE', 'Ready');
     }
   }, [setS]);
 
@@ -434,15 +434,14 @@ export const VoiceSurface: React.FC = () => {
             <span
               style={{
                 fontSize: '11.5px',
-                fontWeight: query === 'Listening...' ? 500 : 600,
-                color: query === 'Listening...' ? '#64748b' : '#1e293b',
-                fontStyle: query === 'Listening...' ? 'italic' : 'normal',
+                fontWeight: 600,
+                color: '#1e293b',
                 whiteSpace: 'nowrap' as const,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
               }}
             >
-              {query === 'Listening...' ? 'Listening... speak now' : query}
+              {query}
             </span>
           </div>
         ) : state === 'LISTENING' ? (
@@ -452,7 +451,7 @@ export const VoiceSurface: React.FC = () => {
               style={{
                 fontSize: '11.5px',
                 fontWeight: 500,
-                color: '#64748b',
+                color: '#ef4444',
                 fontStyle: 'italic',
                 whiteSpace: 'nowrap' as const,
                 overflow: 'hidden',
@@ -460,6 +459,12 @@ export const VoiceSurface: React.FC = () => {
               }}
             >
               Listening... speak now
+            </span>
+          </div>
+        ) : !reply ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+            <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>
+              Hold Space to speak
             </span>
           </div>
         ) : null}

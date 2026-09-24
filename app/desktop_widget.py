@@ -11,11 +11,18 @@ Responsibilities:
 from __future__ import annotations
 import logging
 import sys
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import threading
 import time
 from typing import Optional
 from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
-from PySide6.QtCore import Qt, QUrl, QTimer, QObject, QEvent
+from PySide6.QtCore import Qt, QUrl, QTimer, QObject, QEvent, Signal
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 
@@ -28,6 +35,14 @@ CARD_W   = 384
 CARD_H   = 195
 SHRINK_W = 180
 SHRINK_H = 54
+
+
+class BridgeDispatcher(QObject):
+    """Thread-safe signal dispatcher ensuring voice worker threads post events to the Qt GUI main thread."""
+    action_requested = Signal(str)
+    state_changed = Signal(str, str)
+    user_transcript_received = Signal(str)
+    assistant_response_received = Signal(str)
 
 
 class GlobalKeyFilter(QObject):
@@ -72,6 +87,13 @@ class FramelessDesktopWidget(QWebEngineView):
         self._is_on_top = True
         self._shrunken  = False
         self.controller: Optional[VoiceController] = None
+
+        # Thread-safe Qt Signal Dispatcher
+        self.dispatcher = BridgeDispatcher()
+        self.dispatcher.action_requested.connect(self._handle_action_main_thread)
+        self.dispatcher.state_changed.connect(self._handle_state_main_thread)
+        self.dispatcher.user_transcript_received.connect(self._handle_user_transcript_main_thread)
+        self.dispatcher.assistant_response_received.connect(self._handle_assistant_response_main_thread)
 
         # Frameless transparent window
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -132,72 +154,103 @@ class FramelessDesktopWidget(QWebEngineView):
     def come_up(self):
         """Bring widget above ALL applications (Chrome, VS Code, full-screen tabs)."""
         self._is_on_top = True
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            GWL_EXSTYLE = -20
+            WS_EX_TOPMOST = 0x00000008
+            HWND_TOPMOST = -1
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOPMOST)
+            ctypes.windll.user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040 | 0x0020)
+        except Exception as e:
+            logger.debug(f"Win32 come_up error: {e}")
         self.show()
         self.raise_()
         self.activateWindow()
 
-        try:
-            import ctypes
-            hwnd = int(self.winId())
-            ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
-        except Exception as e:
-            logger.debug(f"Win32 SetWindowPos error: {e}")
-
     def send_to_back(self):
         """Pin widget behind active windows directly on desktop wallpaper."""
         self._is_on_top = False
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.show()
-        self.lower()
-
         try:
             import ctypes
             hwnd = int(self.winId())
-            ctypes.windll.user32.SetWindowPos(hwnd, 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+            GWL_EXSTYLE = -20
+            WS_EX_TOPMOST = 0x00000008
+            HWND_NOTOPMOST = -2
+            HWND_BOTTOM = 1
+            # Remove topmost style so it can actually sit behind normal windows
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style & ~WS_EX_TOPMOST)
+            ctypes.windll.user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0020)
+            ctypes.windll.user32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0020)
         except Exception as e:
-            logger.debug(f"Win32 SetWindowPos error: {e}")
+            logger.debug(f"Win32 send_to_back error: {e}")
+        self.lower()
 
     def shrink(self):
         """Collapse to compact pill badge."""
         self._shrunken = True
         self._position_shrink()
         self.page().runJavaScript("if (window.__aurexShrink) { window.__aurexShrink(); }")
+        logger.info("[DESKTOP] Widget shrunken to pill badge.")
 
     def expand(self):
         """Restore full card."""
         self._shrunken = False
         self._position_card()
         self.page().runJavaScript("if (window.__aurexExpand) { window.__aurexExpand(); }")
+        logger.info("[DESKTOP] Widget expanded to full card.")
 
-    def handle_action(self, action: str):
+    # ─── Thread-Safe Handlers Called via Signals ─────────────────────────────
+
+    def _handle_action_main_thread(self, action: str):
+        logger.info(f"[DESKTOP] Processing action on GUI thread: {action}")
         if action == "come_up":
-            QTimer.singleShot(0, self.come_up)
+            self.come_up()
         elif action == "go_back":
-            QTimer.singleShot(0, self.send_to_back)
+            self.send_to_back()
         elif action == "shrink":
-            QTimer.singleShot(0, self.shrink)
+            self.shrink()
         elif action == "expand":
-            QTimer.singleShot(0, self.expand)
+            self.expand()
 
-    def set_ui_state(self, state_str: str, text: str):
+    def _handle_state_main_thread(self, state_str: str, text: str):
         safe_t = text.replace("'", "\\'")
         js = f"window.__aurexSetState && window.__aurexSetState('{state_str}', '{safe_t}');"
-        QTimer.singleShot(0, lambda: self.page().runJavaScript(js))
+        self.page().runJavaScript(js)
 
-    def set_ui_user_message(self, text: str):
-        """Show user transcript immediately on UI before agent finishes."""
+    def _handle_user_transcript_main_thread(self, text: str):
         safe_t = text.replace("'", "\\'")
         js = f"window.__aurexSetUserMessage && window.__aurexSetUserMessage('{safe_t}');"
-        QTimer.singleShot(0, lambda: self.page().runJavaScript(js))
+        self.page().runJavaScript(js)
 
-    def set_ui_assistant_message(self, text: str):
-        """Show agent response on UI."""
+    def _handle_assistant_response_main_thread(self, text: str):
         safe_t = text.replace("'", "\\'")[:140]
         js = f"window.__aurexSetAssistantMessage && window.__aurexSetAssistantMessage('{safe_t}');"
-        QTimer.singleShot(0, lambda: self.page().runJavaScript(js))
+        self.page().runJavaScript(js)
+
+    # ─── Public API (Invoked from any thread) ────────────────────────────────
+
+    def handle_action(self, action: str):
+        self.dispatcher.action_requested.emit(action)
+
+    def set_ui_state(self, state_str: str, text: str):
+        self.dispatcher.state_changed.emit(state_str, text)
+
+    def set_ui_user_message(self, text: str):
+        self.dispatcher.user_transcript_received.emit(text)
+
+    def set_ui_assistant_message(self, text: str):
+        self.dispatcher.assistant_response_received.emit(text)
+
+    def mouseDoubleClickEvent(self, event):
+        """Double click anywhere on the widget to toggle between pill and box mode."""
+        if self._shrunken:
+            self.expand()
+        else:
+            self.shrink()
+        event.accept()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -208,9 +261,10 @@ class FramelessDesktopWidget(QWebEngineView):
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             # If shrunken into pill shape, clicking expands to full card
             if self._shrunken:
-                QTimer.singleShot(0, self.expand)
-        else:
-            super().mousePressEvent(event)
+                self.expand()
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         if self._drag_pos is not None and event.buttons() == Qt.LeftButton:
@@ -223,35 +277,31 @@ class FramelessDesktopWidget(QWebEngineView):
         super().mouseReleaseEvent(event)
 
 
-_instance_mutex = None
-
-def _ensure_single_instance():
-    global _instance_mutex
+def _kill_previous_instances():
+    """Ensure no duplicate AUREX desktop widgets are lingering."""
+    import os
+    current_pid = os.getpid()
     try:
-        import ctypes
-        _instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "AurexSingleInstanceDesktopMutex")
-        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-            logger.warning("[DESKTOP] Another AUREX desktop instance is already running. Focusing existing instance.")
+        import psutil
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                import urllib.request, json
-                req = urllib.request.Request(
-                    "http://127.0.0.1:8765/api/command",
-                    data=json.dumps({"command": "come up"}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"}
-                )
-                urllib.request.urlopen(req, timeout=1.0)
-            except Exception:
+                if proc.info['pid'] != current_pid and 'python' in (proc.info['name'] or '').lower():
+                    cmd = " ".join(proc.info['cmdline'] or [])
+                    if "desktop_widget" in cmd:
+                        logger.info(f"Stopping previous AUREX instance (PID {proc.info['pid']})")
+                        proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-            sys.exit(0)
     except Exception as e:
-        logger.debug(f"Single instance check error: {e}")
+        logger.debug(f"Process cleanup check: {e}")
 
 
 def launch_widget(port: int = 8765):
     """Main application entry point initializing GUI and clean push-to-talk voice subsystem."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    _ensure_single_instance()
+    # Clean up any zombie instances first
+    _kill_previous_instances()
 
     server_thread = threading.Thread(
         target=run_server,
@@ -273,7 +323,7 @@ def launch_widget(port: int = 8765):
     widget.controller = ctrl
     ctrl.set_ui_action_handler(widget.handle_action)
 
-    # Bind UI events
+    # Bind UI events thread-safely
     ctrl.on("state", lambda state, text: widget.set_ui_state(state, text))
     ctrl.on("user_transcript", lambda text: widget.set_ui_user_message(text))
     ctrl.on("assistant_response", lambda text: widget.set_ui_assistant_message(text))

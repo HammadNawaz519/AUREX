@@ -177,7 +177,30 @@ class AurexAgent:
                 self.memory.add_history("assistant", ans)
                 return ans
 
-        # Personal memory
+        # Personal memory & learned knowledge about Hammad
+        learned_triggers = [
+            "what have you learned about me", "what u learnt abt me", "what did you learn about me",
+            "what do you know about me", "what you know about me", "who am i", "tell me about me",
+            "what do you remember about me", "what have you learned", "what u learned", "what have you learnt",
+            "what u learn about me", "what did u learn", "what do u know", "what you learnt about me"
+        ]
+        if any(p in lower for p in learned_triggers) or re.search(r"(who am i|tell me about me|tell me about myself|(what|what all)\s+(do\s+|did\s+|have\s+)?(you|u)\s+(learn|learnt|learned|know|remember).*(about me|abt me|about myself)?)", lower):
+            prefs = self.memory.list_preferences()
+            pref_summary = ""
+            if prefs:
+                pref_items = [f"{p['key'].replace('_', ' ')} is {p['value']}" for p in prefs[:3]]
+                pref_summary = " Saved preferences: " + ", ".join(pref_items) + "."
+            ans = (
+                f"You are Hammad, my creator. I know you work in Windows, build software projects like your OS project, "
+                f"and prioritize fast, push-to-talk voice execution without fluff.{pref_summary} "
+                f"I continuously learn your workflows and remain standing by for your commands."
+            )
+            self.context.add_turn(clean_text, ans)
+            self.memory.add_history("user", clean_text)
+            self.memory.add_history("assistant", ans)
+            return ans
+
+        # Personal location memory
         if any(p in lower for p in ["where do i keep", "where is my", "find my"]):
             matched_path = self.semantic_memory.search_locations(clean_text)
             if matched_path:
