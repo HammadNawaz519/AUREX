@@ -34,16 +34,19 @@ class WakeWordDetector:
         custom = settings.wake_word.lower()
         clean = text.strip()
 
+        # Phonetic variants Whisper often produces for 'AUREX'
+        wake_names = rf"{re.escape(custom)}|aurex|orex|aurix|arex|orix|alrex|rex|jarvis|alex"
         patterns = [
-            rf"^(?:hey|hi|hello|ok|okay)?\s*{re.escape(custom)}[,\.!?;:]*\s*",
-            r"^(?:hey|hi|hello|ok|okay)?\s*aurex[,\.!?;:]*\s*",
-            r"^(?:hey|hi|hello|ok|okay)?\s*rex[,\.!?;:]*\s*",
-            r"^(?:hey|hi|hello|ok|okay)?\s*jarvis[,\.!?;:]*\s*",
+            rf"^(?:hey|hi|hello|ok|okay)?\s*(?:{wake_names})[,\.!?;:]*\s*",
+            rf"(?:hey|hi|hello|ok|okay)\s+(?:{wake_names})[,\.!?;:]*\s*",
+            rf"\b(?:{wake_names})[,\.!?;:]*$",
         ]
         for p in patterns:
-            m = re.match(p, clean, re.IGNORECASE)
+            m = re.search(p, clean, re.IGNORECASE)
             if m:
-                return True, clean[m.end():].strip()
+                # Strip matched wake phrase
+                stripped = (clean[:m.start()] + " " + clean[m.end():]).strip()
+                return True, stripped
 
         return False, clean
 
