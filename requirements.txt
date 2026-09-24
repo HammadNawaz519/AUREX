@@ -10,3 +10,12 @@ pillow>=10.0.0
 pywin32>=306
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
+# Vision & Screen Understanding
+mss>=9.0.1
+pyautogui>=0.9.54
+# OCR (optional — Tesseract must be installed separately)
+# pytesseract>=0.3.10
+# Wake Word (optional — install one)
+# openwakeword>=0.6.0
+# vosk>=0.3.45
+# openai-whisper>=20231117

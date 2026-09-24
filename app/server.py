@@ -1,7 +1,14 @@
 """Local HTTP API Server for AUREX TypeScript Voice Surface.
 
-Provides zero-dependency REST endpoints on http://127.0.0.1:8765 to execute commands,
-manage voice transcription, and query agent status with full CORS support.
+Provides zero-dependency REST endpoints on http://127.0.0.1:8765:
+  GET  /api/status           — agent status
+  GET  /api/screen/state     — current screen-awareness state
+  POST /api/screen/enable    — enable screen awareness
+  POST /api/screen/disable   — disable screen awareness
+  GET  /api/plan/current     — current task plan
+  POST /api/command          — execute text command
+  POST /api/voice            — transcribe + execute audio command
+  POST /api/widget/action    — trigger desktop widget action
 """
 
 import io
@@ -50,14 +57,68 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+
         if parsed.path == "/api/status":
             settings = get_settings()
+            agent = get_agent()
             payload = {
                 "status": "ONLINE",
                 "agent": "AUREX",
                 "provider": settings.ai_provider,
-                "privacy_mode": settings.privacy_mode
+                "privacy_mode": settings.privacy_mode,
+                "screen_aware": agent.is_screen_aware,
             }
+            self._set_cors_headers(200)
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+            return
+
+        if parsed.path == "/api/screen/state":
+            agent = get_agent()
+            payload = {"screen_aware": agent.is_screen_aware}
+            try:
+                from app.vision.screen_understanding import get_screen_understanding_service
+                svc = get_screen_understanding_service()
+                state = svc.get_current_state()
+                if state:
+                    payload["application"] = state.application
+                    payload["window_title"] = state.window_title
+                    payload["element_count"] = len(state.elements)
+                    payload["browser_url"] = state.browser_url
+            except Exception:
+                pass
+            self._set_cors_headers(200)
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+            return
+
+        if parsed.path == "/api/plan/current":
+            try:
+                from app.core.planner import get_task_planner
+                planner = get_task_planner()
+                plan = planner.get_current_plan()
+                if plan:
+                    payload = plan.to_dict() if hasattr(plan, "to_dict") else {"display": plan.to_display()}
+                    # Serialize steps
+                    payload = {
+                        "id": plan.id,
+                        "goal": plan.goal,
+                        "status": plan.status,
+                        "progress": plan.progress_text,
+                        "done": plan.done_count,
+                        "total": plan.total_count,
+                        "steps": [
+                            {
+                                "id": s.id,
+                                "description": s.description,
+                                "status": s.status.value,
+                                "risk": s.risk_level,
+                            }
+                            for s in plan.steps
+                        ],
+                    }
+                else:
+                    payload = {"plan": None}
+            except Exception as e:
+                payload = {"error": str(e)}
             self._set_cors_headers(200)
             self.wfile.write(json.dumps(payload).encode("utf-8"))
             return
@@ -194,6 +255,26 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
 
             except Exception as e:
                 logger.error(f"Error handling /api/voice: {e}")
+                self._set_cors_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+        elif parsed.path == "/api/screen/enable":
+            try:
+                agent = get_agent()
+                agent.enable_screen_awareness()
+                self._set_cors_headers(200)
+                self.wfile.write(json.dumps({"success": True, "screen_aware": True}).encode("utf-8"))
+            except Exception as e:
+                self._set_cors_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+        elif parsed.path == "/api/screen/disable":
+            try:
+                agent = get_agent()
+                agent.disable_screen_awareness()
+                self._set_cors_headers(200)
+                self.wfile.write(json.dumps({"success": True, "screen_aware": False}).encode("utf-8"))
+            except Exception as e:
                 self._set_cors_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
