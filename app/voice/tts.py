@@ -1,83 +1,118 @@
-"""Text-to-speech output system for AUREX using edge-tts with Windows SAPI fallback."""
+"""Text-to-speech for AUREX — warm JARVIS-style voice (Hammad personalized)."""
 
 import asyncio
 import os
+import queue
 import tempfile
 import threading
 import logging
-from pathlib import Path
 from typing import Optional
 from app.config.settings import get_settings
 from app.core.events import get_event_bus, AgentState
 
 logger = logging.getLogger(__name__)
 
+# Warm, cultured British neural voice — JARVIS tone
+PREFERRED_VOICE = "en-GB-RyanNeural"
+FALLBACK_VOICE  = "en-GB-ThomasNeural"
+US_FALLBACK     = "en-US-GuyNeural"
+
+# Natural, confident prosody — warm resonance
+SPEECH_RATE   = "-3%"   # natural, unhurried
+SPEECH_PITCH  = "-2Hz"  # deep, warm chest tone
+SPEECH_VOLUME = "+10%"
+
 
 class TextToSpeech:
     def __init__(self):
-        self._is_speaking = False
-        self._lock = threading.Lock()
+        self._queue = queue.Queue()
+        self._worker_thread = threading.Thread(target=self._process_queue, daemon=True, name="AurexTTSWorker")
+        self._worker_thread.start()
 
     def speak(self, text: str, async_mode: bool = True):
-        """Speak the given text calmly."""
+        """Speak text in a calm, warm JARVIS voice."""
         clean = text.strip()
         if not clean:
             return
 
-        # Do not speak code blocks or giant multi-line dumps
+        # Skip code blocks and long technical dumps for speech
         lines = clean.splitlines()
         speakable_lines = [l for l in lines if not l.startswith("```") and len(l) < 300]
-        speakable_text = " ".join(speakable_lines[:3])
-        if not speakable_text:
+        speakable = " ".join(speakable_lines[:4]).strip()
+        if not speakable:
             return
 
-        if async_mode:
-            threading.Thread(target=self._speak_sync, args=(speakable_text,), daemon=True).start()
-        else:
-            self._speak_sync(speakable_text)
+        self._queue.put(speakable)
+
+    def _process_queue(self):
+        """Sequential speaker to prevent speech overlaps."""
+        while True:
+            text = self._queue.get()
+            try:
+                self._speak_sync(text)
+            except Exception as e:
+                logger.error(f"TTS error: {e}")
+            finally:
+                self._queue.task_done()
 
     def _speak_sync(self, text: str):
-        with self._lock:
-            self._is_speaking = True
-            bus = get_event_bus()
-            bus.publish("state_changed", state=AgentState.SPEAKING)
+        bus = get_event_bus()
+        bus.publish("state_changed", state=AgentState.SPEAKING)
 
-            success = False
-            # 1. Try edge-tts (High quality neural voice)
+        success = False
+
+        # 1. edge-tts — high-quality British neural voice
+        try:
+            success = asyncio.run(self._edge_tts_speak(text))
+        except Exception as e:
+            logger.debug(f"edge-tts failed: {e}")
+
+        # 2. Windows SAPI fallback (always available offline)
+        if not success:
             try:
-                success = asyncio.run(self._edge_tts_speak(text))
+                self._sapi_speak(text)
+                success = True
             except Exception as e:
-                logger.debug(f"edge-tts unavailable: {e}")
+                logger.warning(f"SAPI TTS failed: {e}")
 
-            # 2. Offline fallback: Windows SAPI (built into all Windows machines)
-            if not success:
-                try:
-                    self._sapi_speak(text)
-                    success = True
-                except Exception as e:
-                    logger.warning(f"SAPI TTS fallback failed: {e}")
-
-            self._is_speaking = False
-            bus.publish("state_changed", state=AgentState.IDLE)
+        bus.publish("state_changed", state=AgentState.IDLE)
 
     async def _edge_tts_speak(self, text: str) -> bool:
         import edge_tts
         import sounddevice as sd
         import soundfile as sf
+
         settings = get_settings()
-        voice = settings.tts_voice or "en-US-JennyNeural"
+        voice = getattr(settings, "tts_voice", None) or PREFERRED_VOICE
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
             temp_path = tf.name
 
         try:
-            communicate = edge_tts.Communicate(text, voice)
-            await asyncio.wait_for(communicate.save(temp_path), timeout=5.0)
+            communicate = edge_tts.Communicate(
+                text, voice,
+                rate=SPEECH_RATE,
+                pitch=SPEECH_PITCH,
+                volume=SPEECH_VOLUME,
+            )
+            await asyncio.wait_for(communicate.save(temp_path), timeout=9.0)
 
             data, fs = sf.read(temp_path)
             sd.play(data, fs)
             sd.wait()
             return True
+        except Exception as e:
+            logger.debug(f"edge-tts primary error: {e}")
+            # Try secondary British fallback voice
+            try:
+                communicate = edge_tts.Communicate(text, FALLBACK_VOICE, rate=SPEECH_RATE)
+                await asyncio.wait_for(communicate.save(temp_path), timeout=8.0)
+                data, fs = sf.read(temp_path)
+                sd.play(data, fs)
+                sd.wait()
+                return True
+            except Exception:
+                return False
         finally:
             try:
                 if os.path.exists(temp_path):
@@ -86,16 +121,26 @@ class TextToSpeech:
                 pass
 
     def _sapi_speak(self, text: str):
+        """Windows SAPI — instant offline fallback."""
         try:
             import win32com.client
             speaker = win32com.client.Dispatch("SAPI.SpVoice")
+            speaker.Rate = -1
+            speaker.Volume = 100
             speaker.Speak(text)
         except Exception:
-            # Simple powershell SAPI fallback if pywin32 not loaded
-            import subprocess
             clean_safe = text.replace('"', '').replace("'", "")
-            ps_cmd = f"Add-Type -AssemblyName System.speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{clean_safe}')"
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], creationflags=subprocess.CREATE_NO_WINDOW)
+            import subprocess
+            ps = (
+                "Add-Type -AssemblyName System.speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                "$s.Rate = -1; "
+                f"$s.Speak('{clean_safe}')"
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
 
 
 _global_tts = TextToSpeech()
