@@ -1,928 +1,552 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
-type AssistantState = 'IDLE' | 'LISTENING' | 'THINKING' | 'PLANNING' | 'EXECUTING' | 'VERIFYING' | 'SPEAKING' | 'SUCCESS' | 'ERROR';
+// ─── Types ──────────────────────────────────────────────────────────────────
+type AState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
-interface TaskStep {
-  id: number;
-  description: string;
-  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
-  risk: string;
+const isQt = typeof navigator !== 'undefined' && /QtWebEngine/i.test(navigator.userAgent);
+const API = () => (typeof window !== 'undefined' && window.location.origin.startsWith('http'))
+  ? window.location.origin
+  : 'http://127.0.0.1:8765';
+
+// ─── Particle ────────────────────────────────────────────────────────────────
+interface P {
+  x: number; y: number; vx: number; vy: number;
+  life: number; max: number; size: number; hue: number; orbit: boolean;
+  angle: number; r: number; speed: number;
 }
-
-interface TaskPlan {
-  id: string;
-  goal: string;
-  status: string;
-  progress: string;
-  done: number;
-  total: number;
-  steps: TaskStep[];
-}
-
-// ─── Constants ──────────────────────────────────────────────────────────────────
-const isQtWebEngine = typeof navigator !== 'undefined' && /QtWebEngine/i.test(navigator.userAgent);
-const getApiBase = () => {
-  if (typeof window !== 'undefined' && window.location.origin.startsWith('http')) return window.location.origin;
-  return 'http://127.0.0.1:8765';
-};
-
-// ─── Particle System ───────────────────────────────────────────────────────────
-interface Particle {
-  x: number; y: number;
-  vx: number; vy: number;
-  life: number; maxLife: number;
-  size: number; alpha: number;
-  hue: number; orbit: boolean;
-  angle: number; radius: number; speed: number;
-}
-
-function createParticle(cx: number, cy: number, state: AssistantState): Particle {
-  const orbit = state === 'THINKING' || state === 'PLANNING' || state === 'EXECUTING';
+function mkParticle(cx: number, cy: number, s: AState): P {
+  const orbit = s === 'THINKING';
   const angle = Math.random() * Math.PI * 2;
-  const radius = orbit ? 38 + Math.random() * 22 : Math.random() * 60;
-
-  const hueMap: Record<AssistantState, number> = {
-    IDLE: 210, LISTENING: 160, THINKING: 260, PLANNING: 280,
-    EXECUTING: 200, VERIFYING: 180, SPEAKING: 230, SUCCESS: 140, ERROR: 0,
-  };
-
+  const r = orbit ? 22 + Math.random() * 14 : 10 + Math.random() * 40;
+  const hues: Record<AState, number> = { IDLE: 220, LISTENING: 160, THINKING: 265, SPEAKING: 210 };
   return {
-    x: orbit ? cx + Math.cos(angle) * radius : cx + (Math.random() - 0.5) * 120,
-    y: orbit ? cy + Math.sin(angle) * radius : cy + (Math.random() - 0.5) * 120,
-    vx: orbit ? 0 : (Math.random() - 0.5) * 0.6,
-    vy: orbit ? 0 : (Math.random() - 0.5) * 0.6,
-    life: 0,
-    maxLife: 80 + Math.random() * 120,
-    size: 0.8 + Math.random() * 1.8,
-    alpha: 0,
-    hue: (hueMap[state] || 210) + (Math.random() - 0.5) * 30,
-    orbit,
-    angle,
-    radius,
-    speed: (0.006 + Math.random() * 0.012) * (Math.random() > 0.5 ? 1 : -1),
+    x: orbit ? cx + Math.cos(angle) * r : cx + (Math.random() - 0.5) * 80,
+    y: orbit ? cy + Math.sin(angle) * r : cy + (Math.random() - 0.5) * 80,
+    vx: orbit ? 0 : (Math.random() - 0.5) * 0.4,
+    vy: orbit ? 0 : -0.2 - Math.random() * 0.3,
+    life: 0, max: 60 + Math.random() * 80,
+    size: 0.7 + Math.random() * 1.4,
+    hue: (hues[s] || 220) + (Math.random() - 0.5) * 25,
+    orbit, angle, r,
+    speed: (0.008 + Math.random() * 0.014) * (Math.random() > 0.5 ? 1 : -1),
   };
 }
 
-// ─── Main Component ─────────────────────────────────────────────────────────────
+// ─── Component ───────────────────────────────────────────────────────────────
 export const VoiceSurface: React.FC = () => {
-  const [state, setState] = useState<AssistantState>('IDLE');
-  const [statusText, setStatusText] = useState('Standing by');
-  const [userQuery, setUserQuery] = useState('');
-  const [assistantReply, setAssistantReply] = useState('');
-  const [screenAware, setScreenAware] = useState(false);
-  const [plan, setPlan] = useState<TaskPlan | null>(null);
-  const [currentStep, setCurrentStep] = useState('');
-  const [isMinimal, setIsMinimal] = useState(false);
+  const [state, setState] = useState<AState>('IDLE');
+  const [status, setStatus] = useState('Standing by');
+  const [query, setQuery] = useState('');
+  const [reply, setReply] = useState('');
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animFrameRef = useRef<number | null>(null);
-  const tickRef = useRef<number>(0);
-  const particlesRef = useRef<Particle[]>([]);
-  const stateRef = useRef<AssistantState>('IDLE');
-  stateRef.current = state;
+  const rafRef = useRef<number | null>(null);
+  const tick = useRef(0);
+  const particles = useRef<P[]>([]);
+  const stateRef = useRef<AState>('IDLE');
 
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  // Audio refs
+  const ctxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const latestSpeechRef = useRef<string>('');
-  const recognitionRef = useRef<any>(null);
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const speechRef = useRef('');
+  const srRef = useRef<any>(null);
 
-  const planPollRef = useRef<number | null>(null);
+  // Stable fn refs to avoid stale closures
+  const executeRef = useRef<((cmd: string) => Promise<void>) | undefined>(undefined);
+  const sendAudioRef = useRef<((blob: Blob) => Promise<void>) | undefined>(undefined);
+  const speakRef = useRef<((t: string) => void) | undefined>(undefined);
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-  const applyState = useCallback((s: AssistantState, text: string) => {
-    setState(s);
-    setStatusText(text);
-    stateRef.current = s;
-  }, []);
-
-  const stateColors: Record<AssistantState, { primary: string; glow: string; ring: string }> = {
-    IDLE:      { primary: 'rgba(148,163,184,0.6)',  glow: 'rgba(148,163,184,0.15)', ring: '#64748b' },
-    LISTENING: { primary: 'rgba(52,211,153,0.85)',  glow: 'rgba(52,211,153,0.25)',  ring: '#10b981' },
-    THINKING:  { primary: 'rgba(167,139,250,0.85)', glow: 'rgba(167,139,250,0.3)',  ring: '#7c3aed' },
-    PLANNING:  { primary: 'rgba(192,132,252,0.9)',  glow: 'rgba(192,132,252,0.35)', ring: '#a855f7' },
-    EXECUTING: { primary: 'rgba(56,189,248,0.9)',   glow: 'rgba(56,189,248,0.3)',   ring: '#0ea5e9' },
-    VERIFYING: { primary: 'rgba(34,211,238,0.85)',  glow: 'rgba(34,211,238,0.3)',   ring: '#06b6d4' },
-    SPEAKING:  { primary: 'rgba(99,179,237,0.9)',   glow: 'rgba(99,179,237,0.3)',   ring: '#3b82f6' },
-    SUCCESS:   { primary: 'rgba(74,222,128,0.9)',   glow: 'rgba(74,222,128,0.35)',  ring: '#22c55e' },
-    ERROR:     { primary: 'rgba(248,113,113,0.9)',  glow: 'rgba(248,113,113,0.3)',  ring: '#ef4444' },
+  // State colors — all work on white background
+  const COL: Record<AState, { dot: string; ring: string; orb: string; glow: string }> = {
+    IDLE:      { dot: '#94a3b8', ring: '#cbd5e1', orb: '200,210,230', glow: 'rgba(148,163,184,0.15)' },
+    LISTENING: { dot: '#059669', ring: '#10b981', orb: '5,150,105',   glow: 'rgba(5,150,105,0.18)' },
+    THINKING:  { dot: '#7c3aed', ring: '#7c3aed', orb: '124,58,237',  glow: 'rgba(124,58,237,0.18)' },
+    SPEAKING:  { dot: '#0284c7', ring: '#0ea5e9', orb: '2,132,199',   glow: 'rgba(2,132,199,0.18)' },
   };
 
-  // ─── Audio Setup ──────────────────────────────────────────────────────────────
+  const setS = useCallback((s: AState, txt: string) => {
+    setState(s); setStatus(txt); stateRef.current = s;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // ─── Audio Setup ────────────────────────────────────────────────────────────
   const setupAudio = useCallback(async () => {
-    if (audioCtxRef.current && streamRef.current) return;
+    if (ctxRef.current && streamRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
       streamRef.current = stream;
 
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      audioCtxRef.current = ctx;
-      const src = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.75;
-      src.connect(analyser);
-      analyserRef.current = analyser;
+      const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+      ctxRef.current = ac;
+      const src = ac.createMediaStreamSource(stream);
+      const an = ac.createAnalyser();
+      an.fftSize = 128; an.smoothingTimeConstant = 0.6;
+      src.connect(an);
+      analyserRef.current = an;
 
       const mr = new MediaRecorder(stream);
-      mr.ondataavailable = (e) => { if (e.data?.size > 0) audioChunksRef.current.push(e.data); };
+      mr.ondataavailable = (e) => { if (e.data?.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' });
-        audioChunksRef.current = [];
-        if (blob.size > 1500) sendAudioToAgent(blob);
-        else { applyState('IDLE', 'Standing by'); }
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' });
+        chunksRef.current = [];
+        if (blob.size > 1500) sendAudioRef.current?.(blob);
+        else setS('IDLE', 'Standing by');
       };
-      recorderRef.current = mr;
+      recRef.current = mr;
 
-      const SR = !isQtWebEngine && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+      const SR = !isQt && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
       if (SR) {
-        const rec = new SR();
-        rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
-        rec.onresult = (ev: any) => {
-          let txt = '';
-          for (let i = ev.resultIndex; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
-          txt = txt.trim();
-          if (txt) { setUserQuery(txt); latestSpeechRef.current = txt; }
+        const r = new SR();
+        r.continuous = true; r.interimResults = true; r.lang = 'en-US';
+        r.onresult = (ev: any) => {
+          let t = '';
+          for (let i = ev.resultIndex; i < ev.results.length; i++) t += ev.results[i][0].transcript;
+          t = t.trim();
+          if (t) { setQuery(t); speechRef.current = t; }
         };
-        rec.onend = () => { if (stateRef.current === 'LISTENING') try { rec.start(); } catch (_) {} };
-        recognitionRef.current = rec;
+        r.onend = () => { if (stateRef.current === 'LISTENING') try { r.start(); } catch (_) {} };
+        srRef.current = r;
       }
     } catch (e) { console.warn('Audio setup:', e); }
-  }, []);
+  }, [setS]);
 
-  // ─── Listen Controls ──────────────────────────────────────────────────────────
-
-  const startListening = useCallback(async () => {
+  // ─── Listen ──────────────────────────────────────────────────────────────────
+  const startListen = useCallback(async () => {
     if (stateRef.current === 'LISTENING' || stateRef.current === 'THINKING') return;
     await setupAudio();
-    applyState('LISTENING', 'Listening...');
-    setUserQuery(''); latestSpeechRef.current = ''; audioChunksRef.current = [];
-    if (recorderRef.current?.state === 'inactive') try { recorderRef.current.start(100); } catch (_) {}
-    if (recognitionRef.current) try { recognitionRef.current.start(); } catch (_) {}
-  }, [setupAudio, applyState]);
+    setS('LISTENING', 'Listening...');
+    setQuery(''); setReply(''); speechRef.current = ''; chunksRef.current = [];
+    if (recRef.current?.state === 'inactive') try { recRef.current.start(100); } catch (_) {}
+    if (srRef.current) try { srRef.current.start(); } catch (_) {}
+  }, [setupAudio, setS]);
 
-  const stopListening = useCallback(() => {
+  const stopListen = useCallback(() => {
     if (stateRef.current !== 'LISTENING') return;
-    if (recorderRef.current?.state === 'recording') try { recorderRef.current.stop(); } catch (_) {}
-    if (recognitionRef.current) try { recognitionRef.current.stop(); } catch (_) {}
-
+    if (recRef.current?.state === 'recording') try { recRef.current.stop(); } catch (_) {}
+    if (srRef.current) try { srRef.current.stop(); } catch (_) {}
     setTimeout(() => {
-      const text = latestSpeechRef.current.trim();
-      if (text) { latestSpeechRef.current = ''; executeCommand(text); }
-      else if (audioChunksRef.current.length > 0) {
-        const blob = new Blob(audioChunksRef.current, { type: recorderRef.current?.mimeType || 'audio/webm' });
-        audioChunksRef.current = [];
-        if (blob.size > 1500) sendAudioToAgent(blob);
-        else applyState('IDLE', 'Standing by');
-      } else applyState('IDLE', 'Standing by');
+      const txt = speechRef.current.trim();
+      if (txt) { speechRef.current = ''; executeRef.current?.(txt); }
+      else if (chunksRef.current.length > 0) {
+        const blob = new Blob(chunksRef.current, { type: recRef.current?.mimeType || 'audio/webm' });
+        chunksRef.current = [];
+        if (blob.size > 1500) sendAudioRef.current?.(blob);
+        else setS('IDLE', 'Standing by');
+      } else setS('IDLE', 'Standing by');
     }, 120);
-  }, [applyState]);
+  }, [setS]);
 
-  // ─── API Calls ───────────────────────────────────────────────────────────────
-
-  const sendAudioToAgent = async (blob: Blob) => {
-    applyState('THINKING', 'Processing...');
-    try {
-      const res = await fetch(`${getApiBase()}/api/voice`, {
-        method: 'POST',
-        headers: { 'Content-Type': blob.type || 'audio/webm', ...(isQtWebEngine ? { 'X-Client': 'desktop-widget' } : {}) },
-        body: blob,
-      });
-      if (!res.ok) throw new Error(`Status: ${res.status}`);
-      const data = await res.json();
-      if (data.transcript) setUserQuery(data.transcript);
-      handleResponse(data.response || 'Task completed.');
-    } catch (err) {
-      console.warn('Voice error:', err);
-      applyState('IDLE', 'Standing by');
-    }
-  };
-
-  const executeCommand = async (command: string) => {
-    const clean = command.trim();
-    if (!clean) { applyState('IDLE', 'Standing by'); return; }
-    setUserQuery(clean);
-    applyState('THINKING', 'Processing...');
-    try {
-      const res = await fetch(`${getApiBase()}/api/command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(isQtWebEngine ? { 'X-Client': 'desktop-widget' } : {}) },
-        body: JSON.stringify({ command: clean, client: isQtWebEngine ? 'desktop-widget' : 'web', speak: isQtWebEngine }),
-      });
-      if (!res.ok) throw new Error(`Status: ${res.status}`);
-      const data = await res.json();
-      handleResponse(data.response || 'Task executed.');
-    } catch (err) {
-      handleResponse(`Processed: "${clean}".`);
-    }
-  };
-
-  const handleResponse = (reply: string) => {
-    setAssistantReply(reply);
-    // Infer state from response text
-    const r = reply.toLowerCase();
-    if (r.includes('plan') || r.includes('step 1')) {
-      applyState('PLANNING', 'Planning...');
-      pollPlan();
-    } else if (r.includes('executing') || r.includes('completed') || r.includes('✓')) {
-      applyState('EXECUTING', 'Executing...');
-      pollPlan();
-    } else if (r.includes('error') || r.includes('failed')) {
-      applyState('ERROR', 'Error');
-    } else if (r.includes('done') || r.includes('finished') || r.includes('completed')) {
-      applyState('SUCCESS', 'Done');
-      setTimeout(() => applyState('IDLE', 'Standing by'), 3000);
-      return;
-    } else {
-      speakResponse(reply);
-      return;
-    }
-    speakResponse(reply);
-  };
-
-  const speakResponse = (text: string) => {
-    if (isQtWebEngine) {
-      applyState('SPEAKING', 'Speaking...');
-      const words = text.split(/\s+/).length;
-      setTimeout(() => applyState('IDLE', 'Standing by'), Math.max(1600, Math.min(9000, words * 350)));
+  // ─── Speak ────────────────────────────────────────────────────────────────────
+  const speak = useCallback((text: string) => {
+    if (isQt) {
+      setS('SPEAKING', 'Speaking...');
+      setTimeout(() => setS('IDLE', 'Standing by'), Math.max(1600, Math.min(9000, text.split(/\s+/).length * 350)));
       return;
     }
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
-      const utt = new SpeechSynthesisUtterance(text);
-      utt.rate = 1.05; utt.pitch = 0.95;
-      utt.onstart = () => applyState('SPEAKING', 'Speaking...');
-      const done = () => applyState('IDLE', 'Standing by');
-      utt.onend = done; utt.onerror = done;
-      window.speechSynthesis.speak(utt);
-    } else {
-      applyState('IDLE', 'Standing by');
-    }
-  };
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05; u.pitch = 0.95;
+      u.onstart = () => setS('SPEAKING', 'Speaking...');
+      const done = () => setS('IDLE', 'Standing by');
+      u.onend = done; u.onerror = done;
+      window.speechSynthesis.speak(u);
+    } else setS('IDLE', 'Standing by');
+  }, [setS]);
+  speakRef.current = speak;
 
-  // ─── Screen Awareness Toggle ──────────────────────────────────────────────────
-
-  const toggleScreenAware = async () => {
-    const endpoint = screenAware ? '/api/screen/disable' : '/api/screen/enable';
+  // ─── Execute Command ─────────────────────────────────────────────────────────
+  const executeCmd = useCallback(async (cmd: string) => {
+    const clean = cmd.trim();
+    if (!clean) { setS('IDLE', 'Standing by'); return; }
+    setQuery(clean);
+    setS('THINKING', 'Processing...');
     try {
-      const res = await fetch(`${getApiBase()}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const res = await fetch(`${API()}/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(isQt ? { 'X-Client': 'desktop-widget' } : {}) },
+        body: JSON.stringify({ command: clean, client: isQt ? 'desktop-widget' : 'web', speak: isQt }),
+      });
       const data = await res.json();
-      setScreenAware(!!data.screen_aware);
-    } catch (e) {
-      setScreenAware(!screenAware);
+      const r = data.response || 'Done.';
+      setReply(r);
+      speakRef.current?.(r);
+    } catch {
+      const fb = `Processed: "${clean}".`;
+      setReply(fb);
+      speakRef.current?.(fb);
     }
-  };
+  }, [setS]);
+  executeRef.current = executeCmd;
 
-  // ─── Plan Polling ─────────────────────────────────────────────────────────────
+  // ─── Send Audio ───────────────────────────────────────────────────────────────
+  const sendAudio = useCallback(async (blob: Blob) => {
+    setS('THINKING', 'Processing...');
+    try {
+      const res = await fetch(`${API()}/api/voice`, {
+        method: 'POST',
+        headers: { 'Content-Type': blob.type || 'audio/webm', ...(isQt ? { 'X-Client': 'desktop-widget' } : {}) },
+        body: blob,
+      });
+      const data = await res.json();
+      if (data.transcript) setQuery(data.transcript);
+      const r = data.response || 'Done.';
+      setReply(r);
+      speakRef.current?.(r);
+    } catch {
+      setS('IDLE', 'Standing by');
+    }
+  }, [setS]);
+  sendAudioRef.current = sendAudio;
 
-  const pollPlan = useCallback(() => {
-    if (planPollRef.current) clearInterval(planPollRef.current);
-    planPollRef.current = window.setInterval(async () => {
-      try {
-        const res = await fetch(`${getApiBase()}/api/plan/current`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data && data.steps) {
-          setPlan(data);
-          const running = data.steps.find((s: TaskStep) => s.status === 'running');
-          if (running) setCurrentStep(running.description);
-          if (data.status === 'completed' || data.status === 'failed') {
-            clearInterval(planPollRef.current!);
-            planPollRef.current = null;
-            setTimeout(() => setPlan(null), 8000);
-          }
-        }
-      } catch (_) {}
-    }, 1200) as unknown as number;
-  }, []);
-
-  // ─── Keyboard Hotkeys ─────────────────────────────────────────────────────────
-
+  // ─── Keys ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
     const kd = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !e.repeat) { e.preventDefault(); startListening(); }
-      if ((e.ctrlKey || e.metaKey) && e.code === 'Space') { e.preventDefault(); startListening(); }
+      if ((e.code === 'Space' || (e.ctrlKey && e.code === 'Space')) && !e.repeat) {
+        e.preventDefault(); startListen();
+      }
     };
     const ku = (e: KeyboardEvent) => {
-      if (e.code === 'Space') { e.preventDefault(); stopListening(); }
+      if (e.code === 'Space') { e.preventDefault(); stopListen(); }
     };
     window.addEventListener('keydown', kd);
     window.addEventListener('keyup', ku);
-    (window as any).__aurexStartListen = startListening;
-    (window as any).__aurexStopListen = stopListening;
+    (window as any).__aurexStartListen = startListen;
+    (window as any).__aurexStopListen = stopListen;
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); };
-  }, [startListening, stopListening]);
+  }, [startListen, stopListen]);
 
-  // ─── Status Poll ─────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const poll = setInterval(async () => {
-      try {
-        const res = await fetch(`${getApiBase()}/api/status`);
-        const data = await res.json();
-        setScreenAware(!!data.screen_aware);
-      } catch (_) {}
-    }, 5000);
-    return () => clearInterval(poll);
-  }, []);
-
-  // ─── Canvas Drawing ───────────────────────────────────────────────────────────
-
+  // ─── Draw ─────────────────────────────────────────────────────────────────────
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    const W = canvas.width;
-    const H = canvas.height;
-    const cx = W / 2;
-    const cy = H / 2;
+    const W = canvas.width, H = canvas.height;
+    const cx = W / 2, cy = H / 2;
     const s = stateRef.current;
-    const t = tickRef.current;
-    const col = stateColors[s];
+    const t = tick.current;
+    const c = COL[s];
 
-    // Clear with slight trail
-    ctx.fillStyle = 'rgba(8, 10, 20, 0.18)';
-    ctx.fillRect(0, 0, W, H);
+    // Clear — slight alpha trail on dark, full clear for light
+    ctx.clearRect(0, 0, W, H);
 
-    // ── Mic level ────────────────────────────────────────────────────────────
-    let micLevel = 0;
+    // Mic level
+    let mic = 0;
     if (analyserRef.current && s === 'LISTENING') {
-      const freqs = new Uint8Array(analyserRef.current.frequencyBinCount);
-      analyserRef.current.getByteFrequencyData(freqs);
+      const f = new Uint8Array(analyserRef.current.frequencyBinCount);
+      analyserRef.current.getByteFrequencyData(f);
       let sum = 0;
-      for (let b = 2; b < Math.min(48, freqs.length); b++) sum += freqs[b];
-      micLevel = sum / (46 * 255);
+      for (let b = 2; b < Math.min(30, f.length); b++) sum += f[b];
+      mic = sum / (28 * 255);
     }
 
-    // ── Particle update ───────────────────────────────────────────────────────
-    // Spawn particles
-    const spawnRate = s === 'IDLE' ? 0.3 : s === 'EXECUTING' ? 4 : s === 'LISTENING' ? 2 + micLevel * 8 : 2;
-    if (Math.random() < spawnRate * 0.1) {
-      particlesRef.current.push(createParticle(cx, cy, s));
-    }
-    if (particlesRef.current.length > 180) particlesRef.current.splice(0, 5);
+    // Particles — spawn
+    const rate = s === 'IDLE' ? 0.15 : s === 'LISTENING' ? 1.5 + mic * 6 : 1.2;
+    if (Math.random() < rate * 0.08) particles.current.push(mkParticle(cx, cy, s));
+    if (particles.current.length > 80) particles.current.splice(0, 3);
 
-    for (let i = particlesRef.current.length - 1; i >= 0; i--) {
-      const p = particlesRef.current[i];
+    for (let i = particles.current.length - 1; i >= 0; i--) {
+      const p = particles.current[i];
       p.life++;
-
-      if (p.orbit) {
-        p.angle += p.speed;
-        p.x = cx + Math.cos(p.angle) * p.radius;
-        p.y = cy + Math.sin(p.angle) * p.radius;
-      } else {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy -= 0.003; // gentle float up
-      }
-
-      const progress = p.life / p.maxLife;
-      p.alpha = progress < 0.15 ? progress / 0.15 : progress > 0.8 ? (1 - progress) / 0.2 : 1;
-
-      if (p.life >= p.maxLife) { particlesRef.current.splice(i, 1); continue; }
-
+      if (p.orbit) { p.angle += p.speed; p.x = cx + Math.cos(p.angle) * p.r; p.y = cy + Math.sin(p.angle) * p.r; }
+      else { p.x += p.vx; p.y += p.vy; }
+      if (p.life >= p.max) { particles.current.splice(i, 1); continue; }
+      const prog = p.life / p.max;
+      const alpha = prog < 0.2 ? prog / 0.2 : prog > 0.75 ? (1 - prog) / 0.25 : 1;
       ctx.save();
-      ctx.globalAlpha = p.alpha * (s === 'IDLE' ? 0.3 : 0.7);
-      ctx.fillStyle = `hsl(${p.hue}, 80%, 72%)`;
-      ctx.shadowColor = `hsl(${p.hue}, 90%, 65%)`;
-      ctx.shadowBlur = 4;
+      ctx.globalAlpha = alpha * (s === 'IDLE' ? 0.35 : 0.65);
+      ctx.fillStyle = `hsl(${p.hue},75%,50%)`;
+      ctx.shadowColor = `hsl(${p.hue},85%,55%)`;
+      ctx.shadowBlur = 3;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
 
-    // ── Dynamic concentric rings ───────────────────────────────────────────────
-    const ringCount = s === 'IDLE' ? 2 : s === 'THINKING' || s === 'PLANNING' ? 4 : 3;
-    for (let r = 0; r < ringCount; r++) {
-      const phase = t * (0.4 + r * 0.15) + r * (Math.PI * 2 / ringCount);
-      const baseR = 20 + r * 12;
-      const pulse = s === 'IDLE' ? Math.sin(t * 0.8 + r) * 2 : Math.sin(t * 1.8 + r * 1.3) * (4 + micLevel * 14);
-      const ringR = baseR + pulse;
-      const alpha = s === 'IDLE' ? 0.08 + Math.sin(phase) * 0.04 : 0.18 + Math.sin(phase) * 0.10;
-      const lineW = s === 'IDLE' ? 0.6 : 1.0 + r * 0.2;
-
-      const grad = ctx.createRadialGradient(cx, cy, ringR * 0.5, cx, cy, ringR + 4);
-      grad.addColorStop(0, `hsla(${parseInt(col.ring.slice(1), 16)}, 80%, 70%, 0)`);
-      grad.addColorStop(0.6, col.primary.replace('0.', `${alpha.toFixed(2)}.`).replace(/0\.\d+\)/, `${alpha})`));
-      grad.addColorStop(1, `${col.ring}00`);
+    // Rings
+    const rings = s === 'IDLE' ? 2 : s === 'THINKING' ? 4 : 3;
+    for (let i = 0; i < rings; i++) {
+      const baseR = 14 + i * 8;
+      const pulse = s === 'IDLE'
+        ? Math.sin(t * 0.7 + i * 1.2) * 1.2
+        : Math.sin(t * 1.6 + i * 1.1) * (2.5 + mic * 8);
+      const rr = Math.max(3, baseR + pulse);
+      const alpha = s === 'IDLE' ? 0.12 + Math.sin(t * 0.9 + i) * 0.04 : 0.22 + Math.sin(t * 1.4 + i) * 0.08;
 
       ctx.beginPath();
-      ctx.strokeStyle = col.ring;
+      ctx.strokeStyle = c.ring;
       ctx.globalAlpha = alpha;
-      ctx.lineWidth = lineW;
-      ctx.arc(cx, cy, Math.max(4, ringR), 0, Math.PI * 2);
+      ctx.lineWidth = s === 'IDLE' ? 0.7 : 1.0 + i * 0.15;
+      ctx.arc(cx, cy, rr, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
 
-    // ── Core orb ──────────────────────────────────────────────────────────────
-    const coreR = s === 'IDLE'
-      ? 10 + Math.sin(t * 0.6) * 1.5
-      : s === 'LISTENING'
-      ? 12 + Math.sin(t * 1.4) * (2 + micLevel * 10)
-      : s === 'EXECUTING'
-      ? 11 + Math.sin(t * 2.4) * 3
-      : 11 + Math.sin(t * 1.1) * 2;
-
-    // Glow layers
-    for (let g = 3; g >= 0; g--) {
-      const gR = coreR + g * 8;
-      const gAlpha = 0.04 + (3 - g) * 0.025;
-      const orbGrad = ctx.createRadialGradient(cx - coreR * 0.25, cy - coreR * 0.25, 0, cx, cy, gR);
-      orbGrad.addColorStop(0, col.primary.replace(/[\d.]+\)$/, '0.9)'));
-      orbGrad.addColorStop(0.5, col.primary.replace(/[\d.]+\)$/, `${gAlpha * 2})`));
-      orbGrad.addColorStop(1, 'transparent');
-      ctx.beginPath();
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = orbGrad;
-      ctx.arc(cx, cy, gR, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Core fill
-    const coreGrad = ctx.createRadialGradient(cx - coreR * 0.3, cy - coreR * 0.3, 0, cx, cy, coreR);
-    coreGrad.addColorStop(0, 'rgba(255,255,255,0.95)');
-    coreGrad.addColorStop(0.4, col.primary.replace(/[\d.]+\)$/, '0.9)'));
-    coreGrad.addColorStop(1, col.primary.replace(/[\d.]+\)$/, '0.3)'));
-    ctx.beginPath();
-    ctx.fillStyle = coreGrad;
-    ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Core highlight
-    ctx.beginPath();
-    ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.arc(cx - coreR * 0.25, cy - coreR * 0.3, coreR * 0.3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ── Rotating arc segments for THINKING / PLANNING / EXECUTING ─────────────
-    if (s === 'THINKING' || s === 'PLANNING' || s === 'EXECUTING' || s === 'VERIFYING') {
-      const arcR = 34;
-      const segments = s === 'EXECUTING' ? 6 : 4;
-      for (let i = 0; i < segments; i++) {
-        const start = t * (s === 'EXECUTING' ? 3.2 : 2.1) + (i * Math.PI * 2) / segments;
-        const arc = (Math.PI * 2 / segments) * 0.55;
-        const alpha = 0.5 + 0.5 * Math.sin(t * 2 + i);
+    // Rotating arcs for THINKING
+    if (s === 'THINKING') {
+      const ar = 28;
+      for (let i = 0; i < 3; i++) {
+        const st = t * 2.4 + (i * Math.PI * 2) / 3;
         ctx.beginPath();
-        ctx.strokeStyle = col.ring;
-        ctx.globalAlpha = alpha * 0.7;
-        ctx.lineWidth = 1.8;
-        ctx.arc(cx, cy, arcR, start, start + arc);
+        ctx.strokeStyle = c.ring;
+        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(t * 2 + i * 1.5);
+        ctx.lineWidth = 1.5;
+        ctx.arc(cx, cy, ar, st, st + 0.9);
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
     }
 
-    // ── Audio waveform ring for LISTENING / SPEAKING ───────────────────────────
+    // Audio waveform ring for LISTENING / SPEAKING
     if ((s === 'LISTENING' || s === 'SPEAKING') && analyserRef.current) {
-      const freqs = new Uint8Array(analyserRef.current.frequencyBinCount);
-      analyserRef.current.getByteFrequencyData(freqs);
-      const baseR2 = 42;
-      const N = 64;
+      const fd = new Uint8Array(analyserRef.current.frequencyBinCount);
+      analyserRef.current.getByteFrequencyData(fd);
+      const N = 48, baseWR = 30;
       ctx.beginPath();
       for (let i = 0; i < N; i++) {
-        const angle2 = (i / N) * Math.PI * 2 - Math.PI / 2;
-        const binIdx = Math.floor((i / N) * freqs.length * 0.5);
-        const level = (freqs[binIdx] || 0) / 255;
-        const r2 = baseR2 + level * 18;
-        const x2 = cx + Math.cos(angle2) * r2;
-        const y2 = cy + Math.sin(angle2) * r2;
-        if (i === 0) ctx.moveTo(x2, y2);
-        else ctx.lineTo(x2, y2);
+        const ang = (i / N) * Math.PI * 2 - Math.PI / 2;
+        const bin = Math.floor((i / N) * fd.length * 0.4);
+        const lvl = (fd[bin] || 0) / 255;
+        const wr = baseWR + lvl * 12;
+        const px = cx + Math.cos(ang) * wr, py = cy + Math.sin(ang) * wr;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
       }
       ctx.closePath();
-      ctx.strokeStyle = col.ring;
-      ctx.globalAlpha = 0.5;
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = c.ring;
+      ctx.globalAlpha = 0.45;
+      ctx.lineWidth = 1.2;
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
 
-    // ── Success burst ──────────────────────────────────────────────────────────
-    if (s === 'SUCCESS') {
-      const burstR = 28 + (t % 80) * 1.2;
-      ctx.beginPath();
-      ctx.strokeStyle = '#22c55e';
-      ctx.globalAlpha = Math.max(0, 1 - (t % 80) / 80);
-      ctx.lineWidth = 2;
-      ctx.arc(cx, cy, burstR, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
+    // Core orb
+    const cR = s === 'IDLE'
+      ? 8 + Math.sin(t * 0.55) * 1
+      : s === 'LISTENING' ? 9 + Math.sin(t * 1.3) * (1.5 + mic * 7)
+      : s === 'THINKING'  ? 8 + Math.sin(t * 1.2) * 1.5
+      : 9 + Math.sin(t * 1.8) * 2;
 
-  }, [stateColors]);
+    // Glow
+    const gGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cR + 16);
+    gGrad.addColorStop(0, `rgba(${c.orb},0.25)`);
+    gGrad.addColorStop(0.5, `rgba(${c.orb},0.08)`);
+    gGrad.addColorStop(1, `rgba(${c.orb},0)`);
+    ctx.fillStyle = gGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cR + 16, 0, Math.PI * 2);
+    ctx.fill();
 
-  // ─── Animation Loop ───────────────────────────────────────────────────────────
+    // Orb fill
+    const oGrad = ctx.createRadialGradient(cx - cR * 0.28, cy - cR * 0.28, 0, cx, cy, cR);
+    oGrad.addColorStop(0, `rgba(${c.orb},0.95)`);
+    oGrad.addColorStop(0.6, `rgba(${c.orb},0.75)`);
+    oGrad.addColorStop(1, `rgba(${c.orb},0.35)`);
+    ctx.fillStyle = oGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, cR, 0, Math.PI * 2);
+    ctx.fill();
 
+    // Specular highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.arc(cx - cR * 0.28, cy - cR * 0.3, cR * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+  }, []); // stable — reads stateRef and tick ref dynamically
+
+  // ─── Animation loop ──────────────────────────────────────────────────────────
   useEffect(() => {
+    const speeds: Record<AState, number> = { IDLE: 0.022, LISTENING: 0.065, THINKING: 0.052, SPEAKING: 0.075 };
     let running = true;
-    const tickSpeed: Record<AssistantState, number> = {
-      IDLE: 0.025, LISTENING: 0.07, THINKING: 0.055, PLANNING: 0.06,
-      EXECUTING: 0.09, VERIFYING: 0.065, SPEAKING: 0.08, SUCCESS: 0.12, ERROR: 0.04,
-    };
-
     const loop = () => {
       if (!running) return;
-      tickRef.current += tickSpeed[stateRef.current] || 0.04;
+      tick.current += speeds[stateRef.current] ?? 0.04;
       draw();
-      animFrameRef.current = requestAnimationFrame(loop);
+      rafRef.current = requestAnimationFrame(loop);
     };
-    animFrameRef.current = requestAnimationFrame(loop);
-    return () => { running = false; if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current); };
+    rafRef.current = requestAnimationFrame(loop);
+    return () => { running = false; if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [draw]);
 
-  // ─── Canvas Resize ────────────────────────────────────────────────────────────
-
+  // ─── Canvas resize ───────────────────────────────────────────────────────────
   useEffect(() => {
     const resize = () => {
       const c = canvasRef.current;
-      if (c) { c.width = c.parentElement?.clientWidth || 200; c.height = c.parentElement?.clientHeight || 200; }
+      if (c) { c.width = c.parentElement?.clientWidth ?? 80; c.height = c.parentElement?.clientHeight ?? 80; }
     };
     resize();
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
   }, []);
 
-  // ─── State Label ─────────────────────────────────────────────────────────────
-
-  const stateLabel: Partial<Record<AssistantState, string>> = {
-    PLANNING: 'PLANNING', EXECUTING: 'EXECUTING', VERIFYING: 'VERIFYING',
-    THINKING: 'THINKING', LISTENING: 'LISTENING', SUCCESS: 'COMPLETED', ERROR: 'ERROR',
+  // ─── Render ──────────────────────────────────────────────────────────────────
+  const dotColors: Record<AState, string> = {
+    IDLE: '#94a3b8', LISTENING: '#059669', THINKING: '#7c3aed', SPEAKING: '#0284c7',
+  };
+  const dotShadow: Record<AState, string> = {
+    IDLE: 'none', LISTENING: '0 0 8px rgba(5,150,105,0.7)', THINKING: '0 0 8px rgba(124,58,237,0.7)', SPEAKING: '0 0 8px rgba(2,132,199,0.7)',
   };
 
-  const col = stateColors[state];
-
-  if (isMinimal) {
-    return (
-      <div
-        style={{ ...styles.minimalWrap, borderColor: col.ring, boxShadow: `0 0 24px ${col.glow}` }}
-        onClick={() => setIsMinimal(false)}
-        title="Click to expand AUREX"
-      >
-        <canvas
-          ref={canvasRef}
-          style={{ width: '100%', height: '100%', borderRadius: '50%' }}
-        />
-      </div>
-    );
-  }
-
   return (
-    <div style={{ ...styles.card, boxShadow: `0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06), inset 0 0 60px ${col.glow}` }}>
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div style={styles.header}>
-        <div style={styles.headerLeft}>
-          <span style={{ ...styles.statusDot, background: col.ring, boxShadow: `0 0 8px ${col.ring}` }} />
-          <span style={styles.brandText}>AUREX</span>
-          {stateLabel[state] && (
-            <span style={{ ...styles.statePill, borderColor: col.ring, color: col.ring }}>
-              {stateLabel[state]}
-            </span>
-          )}
-        </div>
-        <div style={styles.headerRight}>
-          {/* Screen aware badge */}
-          <button
-            style={{ ...styles.iconBtn, color: screenAware ? '#10b981' : '#475569', background: screenAware ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.04)' }}
-            onClick={toggleScreenAware}
-            title={screenAware ? 'Screen Aware ON — click to disable' : 'Enable Screen Awareness'}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" />
-              <path d="M8 21h8M12 17v4" />
-            </svg>
-            {screenAware && <span style={styles.screenBadge}>SCREEN AWARE</span>}
-          </button>
-          {/* Minimal mode */}
-          <button style={styles.iconBtn} onClick={() => setIsMinimal(true)} title="Minimal Mode">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </button>
+    <div
+      style={{
+        width: '350px',
+        backgroundColor: 'rgba(255,255,255,0.88)',
+        border: '1px solid rgba(226,232,240,0.95)',
+        borderRadius: '20px',
+        padding: '14px 18px',
+        boxShadow: `0 16px 36px rgba(15,23,42,0.10), 0 2px 6px rgba(15,23,42,0.04)`,
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        display: 'flex',
+        flexDirection: 'column' as const,
+        gap: '10px',
+        pointerEvents: 'auto' as const,
+        userSelect: 'none' as const,
+        fontFamily: "'Inter','SF Pro Display',system-ui,sans-serif",
+      }}
+      onClick={() => { if (stateRef.current === 'IDLE') startListen(); else if (stateRef.current === 'LISTENING') stopListen(); }}
+      title="Click or hold Space to speak"
+    >
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+          <span style={{
+            width: '8px', height: '8px', borderRadius: '50%',
+            backgroundColor: dotColors[state],
+            boxShadow: dotShadow[state],
+            transition: 'all 0.25s ease', flexShrink: 0,
+          }} />
+          <span style={{ fontSize: '11px', fontWeight: 800, letterSpacing: '1.6px', color: '#0F172A', textTransform: 'uppercase' as const }}>
+            AUREX
+          </span>
+          <span style={{ fontSize: '11px', color: '#475569', fontWeight: 500 }}>{status}</span>
         </div>
       </div>
 
-      {/* ── Orb Canvas ─────────────────────────────────────────────────────── */}
-      <div
-        style={{ ...styles.orbWrap }}
-        onClick={() => { if (state === 'IDLE') startListening(); else if (state === 'LISTENING') stopListening(); }}
-        title="Click or hold Space to activate"
-      >
-        <canvas ref={canvasRef} style={styles.orbCanvas} />
-        {/* Step indicator overlay */}
-        {(state === 'EXECUTING' || state === 'VERIFYING') && plan && (
-          <div style={styles.stepOverlay}>
-            <span style={styles.stepLabel}>{plan.progress}</span>
-          </div>
-        )}
-      </div>
-
-      {/* ── Status text ────────────────────────────────────────────────────── */}
-      <div style={styles.statusRow}>
-        <span style={{ ...styles.statusText, color: col.ring }}>{statusText}</span>
-        {currentStep && (state === 'EXECUTING' || state === 'VERIFYING') && (
-          <span style={styles.stepText}>{currentStep}</span>
-        )}
-      </div>
-
-      {/* ── Plan Panel ─────────────────────────────────────────────────────── */}
-      {plan && plan.steps?.length > 0 && (
-        <div style={styles.planPanel}>
-          <div style={styles.planHeader}>
-            <span style={styles.planIcon}>⬡</span>
-            <span style={styles.planTitle}>TASK PLAN</span>
-            <span style={styles.planProgress}>{plan.progress}</span>
-          </div>
-          <div style={styles.stepsList}>
-            {plan.steps.map((step) => {
-              const icons: Record<string, string> = { done: '✓', running: '→', failed: '✗', pending: '○', skipped: '–' };
-              const colors: Record<string, string> = { done: '#22c55e', running: '#38bdf8', failed: '#ef4444', pending: '#475569', skipped: '#334155' };
-              return (
-                <div key={step.id} style={{ ...styles.stepItem, color: colors[step.status] || '#475569' }}>
-                  <span style={styles.stepIcon}>{icons[step.status] || '○'}</span>
-                  <span style={styles.stepDesc}>{step.description}</span>
-                  {step.risk === 'HIGH' && <span style={styles.riskBadge}>HIGH</span>}
-                </div>
-              );
-            })}
-          </div>
+      {/* Orb + Wave row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px',
+        backgroundColor: 'rgba(241,245,249,0.65)', borderRadius: '12px', padding: '6px 10px' }}>
+        {/* Orb */}
+        <div style={{ width: '64px', height: '64px', flexShrink: 0, position: 'relative' as const }}>
+          <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
         </div>
-      )}
 
-      {/* ── Transcript ─────────────────────────────────────────────────────── */}
-      <div style={styles.transcript}>
-        {userQuery ? (
-          <span style={styles.queryText}>"{userQuery}"</span>
-        ) : assistantReply ? (
-          <span style={styles.replyText}>{assistantReply}</span>
+        {/* Right side: waveform bars */}
+        <div style={{ flex: 1, height: '48px', display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+          <WaveBars state={state} analyser={analyserRef.current} />
+        </div>
+      </div>
+
+      {/* Transcript */}
+      <div style={{ minHeight: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' as const, overflow: 'hidden' }}>
+        {query ? (
+          <span style={{ fontSize: '12.5px', fontWeight: 600, color: '#0284C7', fontStyle: 'italic', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>"{query}"</span>
+        ) : reply ? (
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{reply}</span>
         ) : (
-          <span style={styles.hintText}>Hold Space · Click orb · Say Hey AUREX</span>
+          <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500 }}>Hold Spacebar to speak</span>
         )}
-      </div>
-
-      {/* ── Footer ─────────────────────────────────────────────────────────── */}
-      <div style={styles.footer}>
-        <span style={styles.footerHint}>Ctrl+Space to activate · Double-clap supported</span>
       </div>
     </div>
   );
 };
 
-// ─── Styles ────────────────────────────────────────────────────────────────────
-const styles: Record<string, React.CSSProperties> = {
-  card: {
-    width: '360px',
-    background: 'rgba(8, 10, 20, 0.92)',
-    border: '1px solid rgba(255,255,255,0.07)',
-    borderRadius: '24px',
-    padding: '18px 20px 14px',
-    backdropFilter: 'blur(32px)',
-    WebkitBackdropFilter: 'blur(32px)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
-    userSelect: 'none',
-    pointerEvents: 'auto',
-    transition: 'box-shadow 0.4s ease',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-  headerRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-  },
-  statusDot: {
-    width: '7px',
-    height: '7px',
-    borderRadius: '50%',
-    transition: 'all 0.3s ease',
-    flexShrink: 0,
-  },
-  brandText: {
-    fontSize: '11px',
-    fontWeight: 800,
-    letterSpacing: '3px',
-    color: 'rgba(255,255,255,0.9)',
-    textTransform: 'uppercase',
-  },
-  statePill: {
-    fontSize: '9px',
-    fontWeight: 700,
-    letterSpacing: '1.5px',
-    padding: '2px 7px',
-    borderRadius: '100px',
-    border: '1px solid',
-    opacity: 0.9,
-    textTransform: 'uppercase',
-    transition: 'all 0.3s ease',
-  },
-  iconBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '5px',
-    padding: '4px 8px',
-    borderRadius: '8px',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '10px',
-    fontWeight: 600,
-    letterSpacing: '0.5px',
-    transition: 'all 0.2s ease',
-    outline: 'none',
-  },
-  screenBadge: {
-    fontSize: '8px',
-    fontWeight: 700,
-    letterSpacing: '1px',
-    opacity: 0.9,
-  },
-  orbWrap: {
-    width: '100%',
-    height: '200px',
-    borderRadius: '16px',
-    background: 'rgba(255,255,255,0.02)',
-    overflow: 'hidden',
-    cursor: 'pointer',
-    position: 'relative',
-    border: '1px solid rgba(255,255,255,0.04)',
-  },
-  orbCanvas: {
-    width: '100%',
-    height: '100%',
-    display: 'block',
-  },
-  stepOverlay: {
-    position: 'absolute',
-    bottom: '10px',
-    right: '12px',
-    pointerEvents: 'none',
-  },
-  stepLabel: {
-    fontSize: '10px',
-    fontWeight: 700,
-    color: 'rgba(56,189,248,0.8)',
-    letterSpacing: '1px',
-  },
-  statusRow: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '3px',
-  },
-  statusText: {
-    fontSize: '11px',
-    fontWeight: 600,
-    letterSpacing: '2px',
-    textTransform: 'uppercase',
-    transition: 'color 0.3s ease',
-  },
-  stepText: {
-    fontSize: '11px',
-    color: 'rgba(255,255,255,0.4)',
-    fontWeight: 400,
-    textAlign: 'center',
-    maxWidth: '280px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  planPanel: {
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.06)',
-    borderRadius: '12px',
-    padding: '10px 12px',
-  },
-  planHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '7px',
-    marginBottom: '8px',
-  },
-  planIcon: {
-    fontSize: '11px',
-    color: '#7c3aed',
-  },
-  planTitle: {
-    fontSize: '10px',
-    fontWeight: 700,
-    letterSpacing: '2px',
-    color: 'rgba(255,255,255,0.6)',
-    flex: 1,
-  },
-  planProgress: {
-    fontSize: '10px',
-    fontWeight: 600,
-    color: '#38bdf8',
-    letterSpacing: '0.5px',
-  },
-  stepsList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-  stepItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '7px',
-    fontSize: '11px',
-    fontWeight: 500,
-    transition: 'color 0.25s ease',
-  },
-  stepIcon: {
-    fontSize: '11px',
-    flexShrink: 0,
-    width: '14px',
-    textAlign: 'center',
-  },
-  stepDesc: {
-    flex: 1,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  riskBadge: {
-    fontSize: '8px',
-    fontWeight: 700,
-    color: '#f97316',
-    border: '1px solid rgba(249,115,22,0.4)',
-    padding: '1px 4px',
-    borderRadius: '4px',
-    flexShrink: 0,
-  },
-  transcript: {
-    minHeight: '28px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    textAlign: 'center',
-    padding: '0 8px',
-  },
-  queryText: {
-    fontSize: '12px',
-    fontWeight: 500,
-    color: 'rgba(99,179,237,0.9)',
-    fontStyle: 'italic',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: '100%',
-  },
-  replyText: {
-    fontSize: '11.5px',
-    fontWeight: 400,
-    color: 'rgba(255,255,255,0.7)',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    display: '-webkit-box',
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: 'vertical',
-    maxWidth: '100%',
-    lineHeight: '1.5',
-  } as any,
-  hintText: {
-    fontSize: '10.5px',
-    color: 'rgba(255,255,255,0.2)',
-    fontWeight: 400,
-    letterSpacing: '0.3px',
-  },
-  footer: {
-    display: 'flex',
-    justifyContent: 'center',
-    paddingTop: '2px',
-  },
-  footerHint: {
-    fontSize: '9px',
-    color: 'rgba(255,255,255,0.12)',
-    letterSpacing: '0.5px',
-  },
-  minimalWrap: {
-    width: '64px',
-    height: '64px',
-    borderRadius: '50%',
-    background: 'rgba(8,10,20,0.9)',
-    border: '2px solid',
-    backdropFilter: 'blur(20px)',
-    cursor: 'pointer',
-    overflow: 'hidden',
-    transition: 'box-shadow 0.3s ease',
-  },
+// ─── Wave Bars (classic style, audio-reactive) ──────────────────────────────
+const WaveBars: React.FC<{ state: AState; analyser: AnalyserNode | null }> = ({ state, analyser }) => {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  const raf = useRef<number | null>(null);
+  const tick = useRef(0);
+
+  const NUM = 40;
+  const envelope = useRef<number[]>([]);
+  if (envelope.current.length === 0) {
+    const centers = [{ c: 0.22, a: 0.82, w: 0.08 }, { c: 0.52, a: 0.94, w: 0.09 }, { c: 0.80, a: 0.86, w: 0.08 }];
+    for (let i = 0; i < NUM; i++) {
+      const n = i / (NUM - 1);
+      let v = 0.08;
+      for (const { c, a, w } of centers) v += a * Math.exp(-Math.pow(n - c, 2) / (2 * w * w));
+      v *= 0.72 + 0.38 * Math.sin(i * 1.85) * Math.cos(i * 0.9);
+      v *= Math.pow(Math.sin(n * Math.PI), 0.45);
+      envelope.current.push(Math.max(0.08, Math.min(0.96, v)));
+    }
+  }
+
+  useEffect(() => {
+    let running = true;
+    const draw = () => {
+      if (!running) return;
+      const canvas = ref.current;
+      if (!canvas) { raf.current = requestAnimationFrame(draw); return; }
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { raf.current = requestAnimationFrame(draw); return; }
+      const W = canvas.width, H = canvas.height, cy = H / 2, maxH = (H - 4) / 2;
+      ctx.clearRect(0, 0, W, H);
+
+      let mic = 0;
+      if (analyser && state === 'LISTENING') {
+        const f = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(f);
+        let s = 0;
+        for (let b = 2; b < Math.min(28, f.length); b++) s += f[b];
+        mic = s / (26 * 255);
+      }
+
+      const sp = state === 'IDLE' ? 0 : state === 'LISTENING' ? 0.07 : state === 'SPEAKING' ? 0.13 : 0.08;
+      tick.current += sp;
+
+      const bspc = W / NUM, bw = Math.max(2.2, bspc * 0.62);
+      const sx = (W - NUM * bspc) / 2;
+
+      for (let i = 0; i < NUM; i++) {
+        const norm = i / (NUM - 1);
+        const bx = sx + i * bspc + bspc / 2;
+        let amp = envelope.current[i];
+
+        if (state === 'LISTENING') {
+          const ripple = Math.sin(norm * 12 - tick.current * 3.6) * 0.28 + Math.cos(norm * 6 + tick.current * 2.1) * 0.08;
+          amp = Math.max(0.08, Math.min(0.98, amp * (0.85 + mic * 2.4) + ripple * mic));
+        } else if (state === 'THINKING') {
+          amp = Math.max(0.12, Math.min(0.92, 0.45 + Math.sin(norm * 9 + tick.current * 2.6) * 0.35 + Math.cos(norm * 15 - tick.current * 3.2) * 0.2));
+        } else if (state === 'SPEAKING') {
+          amp = Math.max(0.12, Math.min(0.98, amp * 1.35 + Math.sin(tick.current * 6 + i * 0.35) * 0.26 + Math.sin(tick.current * 11.5 + i * 0.55) * 0.14));
+        } else {
+          amp = amp * 0.5;
+        }
+
+        const bh = Math.max(2, amp * maxH);
+        let r = 219, g = 39, b = 119;
+        if (norm < 0.33) { const t2 = norm / 0.33; r = Math.round(219 + (124 - 219) * t2); g = Math.round(39 + (58 - 39) * t2); b = Math.round(119 + (237 - 119) * t2); }
+        else if (norm < 0.66) { const t2 = (norm - 0.33) / 0.33; r = Math.round(124 + (2 - 124) * t2); g = Math.round(58 + (132 - 58) * t2); b = Math.round(237 + (199 - 237) * t2); }
+        else { r = 2; g = 132; b = 199; }
+
+        ctx.beginPath();
+        ctx.strokeStyle = `rgb(${r},${g},${b})`;
+        ctx.lineWidth = bw;
+        ctx.lineCap = 'round';
+        ctx.moveTo(bx, cy - bh);
+        ctx.lineTo(bx, cy + bh);
+        ctx.stroke();
+      }
+      raf.current = requestAnimationFrame(draw);
+    };
+    raf.current = requestAnimationFrame(draw);
+    return () => { running = false; if (raf.current) cancelAnimationFrame(raf.current); };
+  }, [state, analyser]);
+
+  useEffect(() => {
+    const resize = () => {
+      const c = ref.current;
+      if (c) { c.width = c.parentElement?.clientWidth ?? 200; c.height = c.parentElement?.clientHeight ?? 48; }
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+
+  return <canvas ref={ref} style={{ width: '100%', height: '100%' }} />;
 };
