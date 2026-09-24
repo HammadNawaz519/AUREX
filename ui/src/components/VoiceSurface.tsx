@@ -228,17 +228,7 @@ export const VoiceSurface: React.FC = () => {
     }
   }, [setS]);
 
-  // ─── Shrink / Expand Actions ────────────────────────────────────────────────
-  const triggerShrink = useCallback(async () => {
-    setShrunken(true);
-    try {
-      await fetch(`${API()}/api/command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'shrink', client: 'desktop-widget' }),
-      });
-    } catch (_) {}
-  }, []);
+  // ─── Expand Action ──────────────────────────────────────────────────────────
 
   const triggerExpand = useCallback(async () => {
     setShrunken(false);
@@ -303,28 +293,7 @@ export const VoiceSurface: React.FC = () => {
     };
   }, [setS]);
 
-  // Mic toggle handler
-  const handleMicToggle = useCallback(async () => {
-    if (state === 'LISTENING') {
-      setS('THINKING', 'Transcribing...');
-      try {
-        await fetch(`${API()}/api/ptt`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'stop' }),
-        });
-      } catch (_) {}
-    } else {
-      setS('LISTENING', 'Listening...');
-      try {
-        await fetch(`${API()}/api/ptt`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'start' }),
-        });
-      } catch (_) {}
-    }
-  }, [state, setS]);
+
 
   // Dot color theme
   const dotColor = {
@@ -406,7 +375,7 @@ export const VoiceSurface: React.FC = () => {
         boxSizing: 'border-box' as const,
       }}
     >
-      {/* Header with Mic Button & Shrink */}
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
           <span
@@ -427,51 +396,6 @@ export const VoiceSurface: React.FC = () => {
           <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 500, marginLeft: '2px' }}>
             {status}
           </span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          {/* Visible Mic Button */}
-          <button
-            onClick={handleMicToggle}
-            title={state === 'LISTENING' ? 'Click to Stop Recording' : 'Click to Speak'}
-            style={{
-              background: state === 'LISTENING' ? '#ef4444' : 'rgba(241, 245, 249, 0.9)',
-              color: state === 'LISTENING' ? '#ffffff' : '#475569',
-              border: 'none',
-              fontSize: '12px',
-              cursor: 'pointer',
-              padding: '2px 7px',
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              fontWeight: 600,
-              transition: 'all 0.2s ease',
-            }}
-          >
-            <span>🎙</span>
-            <span style={{ fontSize: '10px' }}>{state === 'LISTENING' ? 'REC' : 'MIC'}</span>
-          </button>
-
-          {/* Shrink to Pill button */}
-          <button
-            onClick={triggerShrink}
-            title="Shrink to compact pill badge"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#94a3b8',
-              fontSize: '11px',
-              cursor: 'pointer',
-              padding: '2px 5px',
-              borderRadius: '6px',
-              transition: 'color 0.2s',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = '#7c3aed')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = '#94a3b8')}
-          >
-            ●
-          </button>
         </div>
       </div>
 
@@ -536,14 +460,6 @@ export const VoiceSurface: React.FC = () => {
               }}
             >
               {reply}
-            </span>
-          </div>
-        ) : null}
-
-        {!query && !reply ? (
-          <div style={{ textAlign: 'center' as const }}>
-            <span style={{ fontSize: '10.5px', color: '#94a3b8', fontWeight: 500 }}>
-              Hold Space to speak · Or click [🎙 MIC]
             </span>
           </div>
         ) : null}

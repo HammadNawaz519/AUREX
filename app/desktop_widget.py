@@ -103,15 +103,31 @@ class FramelessDesktopWidget(QWebEngineView):
         screen = QApplication.primaryScreen().availableGeometry()
         x = screen.x() + screen.width() - CARD_W - 20
         y = screen.y() + 20
-        self.setGeometry(x, y, CARD_W, CARD_H)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
         self.setFixedSize(CARD_W, CARD_H)
+        self.move(x, y)
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            ctypes.windll.user32.SetWindowPos(hwnd, 0, x, y, CARD_W, CARD_H, 0x0004 | 0x0040)
+        except Exception as e:
+            logger.debug(f"Win32 SetWindowPos error: {e}")
 
     def _position_shrink(self):
         screen = QApplication.primaryScreen().availableGeometry()
         x = screen.x() + screen.width() - SHRINK_W - 20
         y = screen.y() + 20
-        self.setGeometry(x, y, SHRINK_W, SHRINK_H)
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
         self.setFixedSize(SHRINK_W, SHRINK_H)
+        self.move(x, y)
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            ctypes.windll.user32.SetWindowPos(hwnd, 0, x, y, SHRINK_W, SHRINK_H, 0x0004 | 0x0040)
+        except Exception as e:
+            logger.debug(f"Win32 SetWindowPos error: {e}")
 
     def come_up(self):
         """Bring widget above ALL applications (Chrome, VS Code, full-screen tabs)."""
@@ -148,13 +164,13 @@ class FramelessDesktopWidget(QWebEngineView):
         """Collapse to compact pill badge."""
         self._shrunken = True
         self._position_shrink()
-        self.page().runJavaScript("window.__aurexShrink && window.__aurexShrink();")
+        self.page().runJavaScript("if (window.__aurexShrink) { window.__aurexShrink(); }")
 
     def expand(self):
         """Restore full card."""
         self._shrunken = False
         self._position_card()
-        self.page().runJavaScript("window.__aurexExpand && window.__aurexExpand();")
+        self.page().runJavaScript("if (window.__aurexExpand) { window.__aurexExpand(); }")
 
     def handle_action(self, action: str):
         if action == "come_up":
@@ -207,9 +223,35 @@ class FramelessDesktopWidget(QWebEngineView):
         super().mouseReleaseEvent(event)
 
 
+_instance_mutex = None
+
+def _ensure_single_instance():
+    global _instance_mutex
+    try:
+        import ctypes
+        _instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "AurexSingleInstanceDesktopMutex")
+        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            logger.warning("[DESKTOP] Another AUREX desktop instance is already running. Focusing existing instance.")
+            try:
+                import urllib.request, json
+                req = urllib.request.Request(
+                    "http://127.0.0.1:8765/api/command",
+                    data=json.dumps({"command": "come up"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                urllib.request.urlopen(req, timeout=1.0)
+            except Exception:
+                pass
+            sys.exit(0)
+    except Exception as e:
+        logger.debug(f"Single instance check error: {e}")
+
+
 def launch_widget(port: int = 8765):
     """Main application entry point initializing GUI and clean push-to-talk voice subsystem."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    _ensure_single_instance()
 
     server_thread = threading.Thread(
         target=run_server,
