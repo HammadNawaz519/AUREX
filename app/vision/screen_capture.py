@@ -40,15 +40,60 @@ class ScreenCaptureService:
         Returns PIL Image in RGB.
         """
         with _LOCK:
+            # 1. Try Qt capture first (highest reliability in desktop widget app)
+            img = self._capture_qt(region)
+            if img is not None:
+                self._last_image = img
+                return img
+
+            # 2. Try MSS
+            if self._mss:
+                try:
+                    img = self._capture_mss(region)
+                    if img is not None:
+                        self._last_image = img
+                        return img
+                except Exception as e:
+                    logger.debug(f"MSS capture failed: {e}")
+
+            # 3. Fallback to Pillow ImageGrab
             try:
-                if self._mss:
-                    return self._capture_mss(region)
-                return self._capture_pillow(region)
+                img = self._capture_pillow(region)
+                if img is not None:
+                    self._last_image = img
+                    return img
             except Exception as e:
-                logger.error(f"Screen capture failed: {e}")
+                logger.debug(f"Pillow ImageGrab failed: {e}")
+
+            return None
+
+    def _capture_qt(self, region: Optional[Tuple[int,int,int,int]] = None) -> Optional[Image.Image]:
+        try:
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtGui import QGuiApplication, QImage
+            app = QApplication.instance()
+            if not app:
+                return None
+            screen = QGuiApplication.primaryScreen()
+            if not screen:
+                return None
+            if region:
+                left, top, right, bottom = region
+                pixmap = screen.grabWindow(0, left, top, right - left, bottom - top)
+            else:
+                pixmap = screen.grabWindow(0)
+
+            if pixmap.isNull():
                 return None
 
-    def _capture_mss(self, region: Optional[Tuple[int,int,int,int]]) -> Image.Image:
+            qimg = pixmap.toImage().convertToFormat(QImage.Format.Format_RGB888)
+            w, h = qimg.width(), qimg.height()
+            b = bytes(qimg.constBits())
+            return Image.frombuffer("RGB", (w, h), b, "raw", "RGB", qimg.bytesPerLine(), 1)
+        except Exception:
+            return None
+
+    def _capture_mss(self, region: Optional[Tuple[int,int,int,int]]) -> Optional[Image.Image]:
         import mss
         sct = self._mss
         if region:
@@ -59,15 +104,12 @@ class ScreenCaptureService:
 
         sct_img = sct.grab(mon)
         img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-        self._last_image = img
         return img
 
-    def _capture_pillow(self, region: Optional[Tuple[int,int,int,int]]) -> Image.Image:
+    def _capture_pillow(self, region: Optional[Tuple[int,int,int,int]]) -> Optional[Image.Image]:
         from PIL import ImageGrab
         img = ImageGrab.grab(bbox=region)
-        img = img.convert("RGB")
-        self._last_image = img
-        return img
+        return img.convert("RGB")
 
     def capture_window(self, hwnd: int) -> Optional[Image.Image]:
         """Capture a specific window by HWND (Windows only)."""

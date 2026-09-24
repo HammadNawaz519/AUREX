@@ -80,15 +80,44 @@ class VoiceController:
             logger.info("[VOICE] Active speech interrupted by user voice input.")
             self.tts.stop()
 
-        # 2. Start microphone capture
+        # 2. Reset partial and emit listening prompt to UI
+        self._last_partial = ""
+        self._emit("user_transcript", "Listening...")
+
+        # 3. Start microphone capture
         success = self.mic.start()
         if success:
             self._set_state("LISTENING", "Listening...")
+            self._stream_thread = threading.Thread(
+                target=self._live_stream_worker,
+                daemon=True,
+                name="AurexLiveSTT"
+            )
+            self._stream_thread.start()
         else:
             self._set_state("ERROR", "Microphone unavailable")
 
+    def _live_stream_worker(self):
+        """Periodically transcribe in-flight audio so words appear live in UI while speaking."""
+        import time
+        time.sleep(0.8)
+        while self.mic.is_recording:
+            try:
+                audio_bytes = self.mic.get_audio_so_far()
+                if audio_bytes and len(audio_bytes) > 20000:
+                    text = self.speech.transcribe(audio_bytes)
+                    if text and self.mic.is_recording:
+                        _, clean = clean_wake_phrase(text)
+                        clean = clean.strip()
+                        if clean and clean != getattr(self, "_last_partial", ""):
+                            self._last_partial = clean
+                            self._emit("user_transcript", clean)
+            except Exception as e:
+                logger.debug(f"[VOICE] Live partial STT: {e}")
+            time.sleep(0.8)
+
     def stop_recording(self):
-        """User released Space bar or clicked stop: transcribe and execute."""
+        """User released Space bar: transcribe and execute."""
         if not self.mic.is_recording:
             return
 
@@ -114,14 +143,16 @@ class VoiceController:
         try:
             # 1. Transcribe audio via Groq Whisper
             transcript = self.speech.transcribe(audio_bytes)
+            if not transcript and getattr(self, "_last_partial", ""):
+                transcript = self._last_partial
+
             if not transcript:
                 self._set_state("IDLE", "Press Space to speak")
                 return
 
             # Strip any accidental wake phrase prefix
             _, clean = clean_wake_phrase(transcript)
-            user_text = clean if clean else transcript
-            user_text = user_text.strip()
+            user_text = (clean if clean else transcript).strip()
             if not user_text:
                 self._set_state("IDLE", "Press Space to speak")
                 return

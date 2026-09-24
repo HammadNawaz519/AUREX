@@ -115,53 +115,43 @@ class GroqProvider(AIProvider):
     def transcribe_audio(self, audio_data: bytes, filename: str = "input.wav") -> str:
         """
         Transcribe audio using Groq Whisper API (whisper-large-v3-turbo).
+        Uses persistent requests.Session for ultra-low latency (<250ms).
         """
-        boundary = "----AurexBoundary123456789"
-        headers = self._get_headers()
-        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        if not audio_data or len(audio_data) < 300:
+            return ""
 
-        # Construct multipart body
-        body_parts = []
-
-        # Model field
-        body_parts.append(f"--{boundary}\r\n".encode("utf-8"))
-        body_parts.append(b'Content-Disposition: form-data; name="model"\r\n\r\n')
-        body_parts.append(b"whisper-large-v3-turbo\r\n")
-
-        # Detect audio content type
         content_type = "audio/wav"
-        if filename.endswith(".webm") or audio_data.startswith(b"\x1aE\xdf\xa3"):
+        if filename.endswith(".webm") or audio_data.startswith(b"\x1aE\xdf\xa3") or audio_data.startswith(b"\x1a\x45\xdf\xa3"):
             filename = "audio.webm"
             content_type = "audio/webm"
         elif filename.endswith(".mp3"):
             content_type = "audio/mp3"
 
-        # Audio file field
-        body_parts.append(f"--{boundary}\r\n".encode("utf-8"))
-        body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode("utf-8"))
-        body_parts.append(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
-        body_parts.append(audio_data)
-        body_parts.append(b"\r\n")
-
-        # End boundary
-        body_parts.append(f"--{boundary}--\r\n".encode("utf-8"))
-
-        full_body = b"".join(body_parts)
-
         try:
-            req = urllib.request.Request(
+            if not hasattr(self, "_http_session") or self._http_session is None:
+                import requests
+                self._http_session = requests.Session()
+
+            files = {
+                "file": (filename, audio_data, content_type),
+                "model": (None, "whisper-large-v3-turbo"),
+                "language": (None, "en"),
+                "response_format": (None, "json"),
+            }
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+
+            resp = self._http_session.post(
                 f"{self.base_url}/audio/transcriptions",
-                data=full_body,
                 headers=headers,
-                method="POST"
+                files=files,
+                timeout=12
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            if resp.status_code == 200:
+                data = resp.json()
                 return data.get("text", "").strip()
-        except urllib.error.HTTPError as e:
-            err = e.read().decode("utf-8", errors="ignore")
-            logger.error(f"Groq audio transcription failed: {e.code} - {err}")
-            return ""
+            else:
+                logger.error(f"Groq audio transcription failed: {resp.status_code} - {resp.text}")
+                return ""
         except Exception as e:
             logger.error(f"Error in Whisper audio transcription: {e}")
             return ""

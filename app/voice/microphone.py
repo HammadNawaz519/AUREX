@@ -114,8 +114,31 @@ class MicrophoneRecorder:
                 self._is_recording = False
                 return False
 
+    def get_audio_so_far(self) -> bytes:
+        """Get copy of audio recorded so far as 16kHz WAV without stopping the stream."""
+        with self._lock:
+            if not self._is_recording or not self._chunks:
+                return b""
+            audio_data = np.concatenate(self._chunks, axis=0)
+
+        # Downsample to 16000Hz
+        sr = self._device_samplerate
+        if sr > 16000:
+            step = int(round(sr / 16000.0))
+            if step > 1:
+                audio_data = audio_data[::step]
+                sr = int(self._device_samplerate / step)
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(audio_data.tobytes())
+        return buf.getvalue()
+
     def stop(self) -> bytes:
-        """Stop microphone capture and return recorded audio as valid WAV bytes."""
+        """Stop microphone capture and return recorded audio as clean 16kHz WAV bytes."""
         with self._lock:
             if not self._is_recording:
                 return b""
@@ -137,14 +160,23 @@ class MicrophoneRecorder:
             self._chunks.clear()
 
         duration = len(audio_data) / float(self._device_samplerate)
-        logger.info(f"[VOICE] Recording stopped (duration: {duration:.2f}s, {len(audio_data)} samples)")
+
+        # Downsample from device samplerate (e.g. 48kHz) to 16kHz for Whisper
+        sr = self._device_samplerate
+        if sr > 16000:
+            step = int(round(sr / 16000.0))
+            if step > 1:
+                audio_data = audio_data[::step]
+                sr = int(self._device_samplerate / step)
+
+        logger.info(f"[VOICE] Recording stopped (duration: {duration:.2f}s, output: {sr}Hz, {len(audio_data)} samples)")
 
         # Encode to clean standard 16-bit WAV bytes
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
-            wf.setframerate(self._device_samplerate)
+            wf.setframerate(sr)
             wf.writeframes(audio_data.tobytes())
         return buf.getvalue()
 

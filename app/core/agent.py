@@ -135,13 +135,23 @@ class AurexAgent:
 
         # Toggle commands
         lower = clean_text.lower()
-        if any(p in lower for p in ["enable screen awareness", "screen aware on", "turn on screen awareness", "activate screen"]):
+        if any(p in lower for p in [
+            "see my screen", "watch my screen", "look at my screen", "see screen",
+            "watch screen", "look at screen", "enable screen awareness", "screen aware on",
+            "turn on screen awareness", "activate screen", "start watching"
+        ]):
             self.enable_screen_awareness()
-            return "Screen awareness activated. I can now see and understand your display, sir."
+            self._screen_awareness_auto_off = False
+            return "I am watching your screen, Hammad."
 
-        if any(p in lower for p in ["disable screen awareness", "screen aware off", "turn off screen awareness", "stop watching"]):
+        if any(p in lower for p in [
+            "stop watching", "stop seeing my screen", "stop seeing screen",
+            "stop watching my screen", "disable screen awareness", "screen aware off",
+            "turn off screen awareness", "stop looking at my screen", "screen off"
+        ]):
             self.disable_screen_awareness()
-            return "Screen awareness deactivated. Your display is private, sir."
+            self._screen_awareness_auto_off = True
+            return "I have stopped watching your screen, Hammad."
 
         # Correction check
         is_corr, corr_msg = self.correction_learner.inspect_for_correction(clean_text)
@@ -191,7 +201,7 @@ class AurexAgent:
         self.event_bus.publish("task_started", task=clean_text)
 
         # ── Screen-aware path ────────────────────────────────────────────────
-        if _needs_screen(clean_text):
+        if _needs_screen(clean_text) or self._screen_aware:
             return self._screen_aware_execute(clean_text)
 
         # ── Plan path ────────────────────────────────────────────────────────

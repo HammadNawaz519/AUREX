@@ -45,6 +45,10 @@ class OCRService:
         logger.warning("OCR: No backend available. Text extraction will be limited.")
         self._backend = "none"
 
+    @property
+    def available(self) -> bool:
+        return self._backend != "none"
+
     def extract_text(self, image: Image.Image) -> str:
         """Extract all text from a PIL Image. Returns plain string."""
         with _LOCK:
@@ -93,13 +97,25 @@ class OCRService:
                 ra_stream.seek(0)
 
                 decoder = await winrt_img.BitmapDecoder.create_async(ra_stream)
-                bitmap = await decoder.get_software_bitmap_async()
+                bitmap = await decoder.get_software_bitmap_converted_async(
+                    winrt_img.BitmapPixelFormat.BGRA8,
+                    winrt_img.BitmapAlphaMode.PREMULTIPLIED
+                )
                 result = await engine.recognize_async(bitmap)
-                return result.text
+                return result.text or ""
 
-            loop = asyncio.new_event_loop()
-            text = loop.run_until_complete(_run())
-            loop.close()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                # Already in async event loop
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    text = pool.submit(lambda: asyncio.run(_run())).result()
+            else:
+                text = asyncio.run(_run())
             return text
         except Exception as e:
             logger.warning(f"WinRT OCR failed: {e}; falling back to tesseract")

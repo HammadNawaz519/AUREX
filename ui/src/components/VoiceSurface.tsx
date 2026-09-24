@@ -434,14 +434,32 @@ export const VoiceSurface: React.FC = () => {
             <span
               style={{
                 fontSize: '11.5px',
-                fontWeight: 600,
-                color: '#1e293b',
+                fontWeight: query === 'Listening...' ? 500 : 600,
+                color: query === 'Listening...' ? '#64748b' : '#1e293b',
+                fontStyle: query === 'Listening...' ? 'italic' : 'normal',
                 whiteSpace: 'nowrap' as const,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
               }}
             >
-              {query}
+              {query === 'Listening...' ? 'Listening... speak now' : query}
+            </span>
+          </div>
+        ) : state === 'LISTENING' ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#ef4444', flexShrink: 0 }}>You:</span>
+            <span
+              style={{
+                fontSize: '11.5px',
+                fontWeight: 500,
+                color: '#64748b',
+                fontStyle: 'italic',
+                whiteSpace: 'nowrap' as const,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              Listening... speak now
             </span>
           </div>
         ) : null}
