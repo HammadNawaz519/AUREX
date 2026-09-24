@@ -256,31 +256,42 @@ export const VoiceSurface: React.FC = () => {
     (window as any).__aurexShrink = () => setShrunken(true);
     (window as any).__aurexExpand = () => setShrunken(false);
     (window as any).__aurexExecute = executeCmd;
-    (window as any).__aurexSetState = (s: AState, q?: string, r?: string) => {
-      setS(s, s === 'LISTENING' ? 'Listening...' : s === 'THINKING' ? 'Thinking...' : s === 'SPEAKING' ? 'Speaking...' : 'Always listening...');
-      if (q !== undefined) setQuery(q);
-      if (r !== undefined) setReply(r);
+    (window as any).__aurexSetState = (s: AState, txt?: string) => {
+      setS(s, txt || (s === 'LISTENING' ? 'Listening...' : s === 'THINKING' ? 'Thinking...' : s === 'SPEAKING' ? 'Speaking...' : 'Ready'));
+    };
+    (window as any).__aurexSetUserMessage = (q: string) => {
+      setQuery(q);
+      setReply('');
+    };
+    (window as any).__aurexSetAssistantMessage = (r: string) => {
+      setReply(r);
     };
     (window as any).__aurexOnTranscript = (q: string, r: string) => {
       setQuery(q);
       setReply(r);
       setS('SPEAKING', 'Speaking...');
-      const wordCount = (r || '').split(/\s+/).length;
-      setTimeout(() => {
-        setS('IDLE', 'Always listening...');
-        setQuery('');
-      }, Math.max(1800, wordCount * 350));
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat && (e.target as HTMLElement)?.tagName !== 'INPUT') {
         e.preventDefault();
         setS('LISTENING', 'Listening...');
+        fetch(`${API()}/api/ptt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'start' }),
+        }).catch(() => {});
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space' && (e.target as HTMLElement)?.tagName !== 'INPUT') {
         e.preventDefault();
+        setS('THINKING', 'Transcribing...');
+        fetch(`${API()}/api/ptt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'stop' }),
+        }).catch(() => {});
       }
     };
 
@@ -292,11 +303,34 @@ export const VoiceSurface: React.FC = () => {
     };
   }, [setS]);
 
+  // Mic toggle handler
+  const handleMicToggle = useCallback(async () => {
+    if (state === 'LISTENING') {
+      setS('THINKING', 'Transcribing...');
+      try {
+        await fetch(`${API()}/api/ptt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'stop' }),
+        });
+      } catch (_) {}
+    } else {
+      setS('LISTENING', 'Listening...');
+      try {
+        await fetch(`${API()}/api/ptt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'start' }),
+        });
+      } catch (_) {}
+    }
+  }, [state, setS]);
+
   // Dot color theme
   const dotColor = {
     IDLE:      '#94a3b8',
-    LISTENING: '#8b5cf6',
-    THINKING:  '#7c3aed',
+    LISTENING: '#ef4444', // Active red indicator for recording
+    THINKING:  '#8b5cf6',
     SPEAKING:  '#06b6d4',
   }[state];
 
@@ -305,7 +339,7 @@ export const VoiceSurface: React.FC = () => {
     return (
       <div
         onClick={triggerExpand}
-        title="Click to expand AUREX"
+        title="Click to expand AUREX to box mode"
         style={{
           width: '164px',
           height: '42px',
@@ -349,7 +383,7 @@ export const VoiceSurface: React.FC = () => {
     );
   }
 
-  // ─── Full Luxury Card (No circle, full wide slow fluid wave, round bottom) ──
+  // ─── Full Box Card ─────────────────────────────────────────────────────────
   return (
     <div
       style={{
@@ -372,8 +406,8 @@ export const VoiceSurface: React.FC = () => {
         boxSizing: 'border-box' as const,
       }}
     >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '18px' }}>
+      {/* Header with Mic Button & Shrink */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
           <span
             style={{
@@ -395,32 +429,57 @@ export const VoiceSurface: React.FC = () => {
           </span>
         </div>
 
-        {/* Shrink button */}
-        <button
-          onClick={triggerShrink}
-          title="Shrink to compact badge"
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: '#94a3b8',
-            fontSize: '11px',
-            cursor: 'pointer',
-            padding: '2px 5px',
-            borderRadius: '6px',
-            transition: 'color 0.2s',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = '#7c3aed')}
-          onMouseLeave={(e) => (e.currentTarget.style.color = '#94a3b8')}
-        >
-          ●
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {/* Visible Mic Button */}
+          <button
+            onClick={handleMicToggle}
+            title={state === 'LISTENING' ? 'Click to Stop Recording' : 'Click to Speak'}
+            style={{
+              background: state === 'LISTENING' ? '#ef4444' : 'rgba(241, 245, 249, 0.9)',
+              color: state === 'LISTENING' ? '#ffffff' : '#475569',
+              border: 'none',
+              fontSize: '12px',
+              cursor: 'pointer',
+              padding: '2px 7px',
+              borderRadius: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontWeight: 600,
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>🎙</span>
+            <span style={{ fontSize: '10px' }}>{state === 'LISTENING' ? 'REC' : 'MIC'}</span>
+          </button>
+
+          {/* Shrink to Pill button */}
+          <button
+            onClick={triggerShrink}
+            title="Shrink to compact pill badge"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#94a3b8',
+              fontSize: '11px',
+              cursor: 'pointer',
+              padding: '2px 5px',
+              borderRadius: '6px',
+              transition: 'color 0.2s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = '#7c3aed')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = '#94a3b8')}
+          >
+            ●
+          </button>
+        </div>
       </div>
 
-      {/* Hero: Full-Width Slow Fluid Harmonic Wave */}
+      {/* Hero: Harmonic Wave */}
       <div
         style={{
           width: '100%',
-          height: '58px',
+          height: '54px',
           background: 'rgba(241, 245, 249, 0.75)',
           borderRadius: '16px',
           padding: '4px 10px',
@@ -436,49 +495,58 @@ export const VoiceSurface: React.FC = () => {
       {/* Transcript & Response Area */}
       <div
         style={{
-          minHeight: '20px',
+          minHeight: '26px',
           display: 'flex',
-          alignItems: 'center',
+          flexDirection: 'column' as const,
+          gap: '3px',
           justifyContent: 'center',
-          textAlign: 'center' as const,
           overflow: 'hidden',
-          padding: '0 4px',
+          padding: '0 2px',
         }}
       >
         {query ? (
-          <span
-            style={{
-              fontSize: '12px',
-              fontWeight: 600,
-              color: '#7c3aed',
-              fontStyle: 'italic',
-              whiteSpace: 'nowrap' as const,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              maxWidth: '100%',
-            }}
-          >
-            "{query}"
-          </span>
-        ) : reply ? (
-          <span
-            style={{
-              fontSize: '11.5px',
-              fontWeight: 500,
-              color: '#1e293b',
-              whiteSpace: 'nowrap' as const,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              maxWidth: '100%',
-            }}
-          >
-            {reply}
-          </span>
-        ) : (
-          <span style={{ fontSize: '10.5px', color: '#94a3b8', fontWeight: 400 }}>
-            Say "Hey AUREX" · Space to activate
-          </span>
-        )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#8b5cf6', flexShrink: 0 }}>You:</span>
+            <span
+              style={{
+                fontSize: '11.5px',
+                fontWeight: 600,
+                color: '#1e293b',
+                whiteSpace: 'nowrap' as const,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {query}
+            </span>
+          </div>
+        ) : null}
+
+        {reply ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#06b6d4', flexShrink: 0 }}>AUREX:</span>
+            <span
+              style={{
+                fontSize: '11.5px',
+                fontWeight: 500,
+                color: '#334155',
+                whiteSpace: 'nowrap' as const,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {reply}
+            </span>
+          </div>
+        ) : null}
+
+        {!query && !reply ? (
+          <div style={{ textAlign: 'center' as const }}>
+            <span style={{ fontSize: '10.5px', color: '#94a3b8', fontWeight: 500 }}>
+              Hold Space to speak · Or click [🎙 MIC]
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -180,7 +180,7 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
                     return
 
                 from app.voice.tts import get_tts
-                from app.voice.wakeword import WakeWordDetector
+                from app.voice.speech import WakeWordDetector
 
                 lower_cmd = command_text.lower()
                 has_wake, clean_cmd = WakeWordDetector.check_and_strip(command_text)
@@ -202,13 +202,13 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
                     trigger_widget_action("go_back")
                     response_text = "Pinned back to your desktop wallpaper, Hammad."
                 elif any(p in lower_cmd for p in [
-                    "shrink", "make small", "minimize",
+                    "shrink", "make small", "minimize", "pill", "pill mode", "pill shape",
                     "go small", "collapse", "tiny mode", "orb mode", "round", "circle", "make it round"
                 ]):
                     trigger_widget_action("shrink")
-                    response_text = "Shrinking to orb."
+                    response_text = "Shrinking to pill mode."
                 elif any(p in lower_cmd for p in [
-                    "expand", "grow", "full size", "restore", "make big", "open", "card mode"
+                    "expand", "grow", "full size", "restore", "make big", "open", "card mode", "box", "box mode", "box shape"
                 ]):
                     trigger_widget_action("expand")
                     response_text = "Restoring full interface, Hammad."
@@ -231,11 +231,30 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
                 self._set_cors_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
+        elif parsed.path == "/api/ptt":
+            try:
+                body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+                payload = json.loads(body)
+                action = payload.get("action", "")
+                from app.voice.controller import get_voice_controller
+                ctrl = get_voice_controller()
+                if action == "start":
+                    ctrl.start_recording()
+                elif action == "stop":
+                    ctrl.stop_recording()
+
+                self._set_cors_headers(200)
+                self.wfile.write(b'{"success": true}')
+            except Exception as e:
+                logger.error(f"Error in /api/ptt: {e}")
+                self._set_cors_headers(500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
         elif parsed.path == "/api/voice":
             audio_bytes = self.rfile.read(content_length)
             try:
                 from app.voice.tts import get_tts
-                from app.voice.wakeword import WakeWordDetector
+                from app.voice.speech import WakeWordDetector, get_recognizer
 
                 rec = get_recognizer()
                 transcript = rec.transcribe(audio_bytes)

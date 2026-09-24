@@ -53,6 +53,7 @@ class ExecuteCommandTool(BaseTool):
                 output += f"\n[stderr]\n{result.stderr}"
 
             success = (result.returncode == 0)
+            clean_summary = "Command completed successfully." if success else f"Command failed with exit code {result.returncode}."
             return ToolResult(
                 success=success,
                 data={
@@ -60,7 +61,7 @@ class ExecuteCommandTool(BaseTool):
                     "stdout": result.stdout,
                     "stderr": result.stderr
                 },
-                message=output.strip() or f"Command exited with code {result.returncode}"
+                message=clean_summary
             )
         except subprocess.TimeoutExpired:
             return ToolResult(success=False, error="Command execution timed out (30s limit).")

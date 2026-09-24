@@ -79,7 +79,7 @@ class AIRouter:
         Evaluate user request and determine the optimal, cost-efficient, and privacy-respecting route.
         """
         clean = user_text.lower().strip()
-        from app.voice.wakeword import WakeWordDetector
+        from app.voice.speech import WakeWordDetector
         _, clean = WakeWordDetector.check_and_strip(clean)
 
         settings = get_settings()

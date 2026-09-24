@@ -1,10 +1,11 @@
-"""AUREX Floating Desktop Widget (UI Viewport & Voice Engine Binding).
+"""AUREX Floating Desktop Widget (UI Viewport & Push-To-Talk Voice Controller).
 
 Responsibilities:
   - Frameless translucent floating window on top-right of desktop
   - WebEngine rendering of dynamic HTML/CSS/JS interface
-  - Connect PySide6 UI cleanly to the AUREX ConversationManager
-  - Zero internal audio loops or competing microphone streams
+  - Reliable push-to-talk via Space bar and microphone button
+  - Immediate user transcript rendering before agent execution
+  - Clean pill/box shrink and expand transitions
 """
 
 from __future__ import annotations
@@ -13,14 +14,13 @@ import sys
 import threading
 import time
 from typing import Optional
-from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt, QUrl, QTimer
+from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
+from PySide6.QtCore import Qt, QUrl, QTimer, QObject, QEvent
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 
 from app.server import run_server, set_widget_action_handler
-from app.voice.conversation import ConversationManager, get_conversation_manager
-from app.voice.voice_state import VoiceState
+from app.voice.controller import VoiceController, get_voice_controller
 
 logger = logging.getLogger("AurexDesktopWidget")
 
@@ -28,6 +28,39 @@ CARD_W   = 384
 CARD_H   = 195
 SHRINK_W = 180
 SHRINK_H = 54
+
+
+class GlobalKeyFilter(QObject):
+    """Application-wide key filter ensuring Space bar activates push-to-talk reliably."""
+
+    def __init__(self, widget: 'FramelessDesktopWidget'):
+        super().__init__()
+        self.widget = widget
+        self.is_space_down = False
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            # If typing inside a standard desktop text input, do NOT hijack Space
+            focused = QApplication.focusWidget()
+            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                return False
+
+            if self.widget.controller:
+                self.is_space_down = True
+                self.widget.controller.start_recording()
+                return True
+
+        elif event.type() == QEvent.KeyRelease and event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            focused = QApplication.focusWidget()
+            if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                return False
+
+            if self.widget.controller and self.is_space_down:
+                self.is_space_down = False
+                self.widget.controller.stop_recording()
+                return True
+
+        return super().eventFilter(watched, event)
 
 
 class FramelessDesktopWidget(QWebEngineView):
@@ -38,7 +71,7 @@ class FramelessDesktopWidget(QWebEngineView):
         self._drag_pos = None
         self._is_on_top = True
         self._shrunken  = False
-        self.conversation_manager: Optional[ConversationManager] = None
+        self.controller: Optional[VoiceController] = None
 
         # Frameless transparent window
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -97,7 +130,7 @@ class FramelessDesktopWidget(QWebEngineView):
             logger.debug(f"Win32 SetWindowPos error: {e}")
 
     def send_to_back(self):
-        """Pin widget behind active windows."""
+        """Pin widget behind active windows directly on desktop wallpaper."""
         self._is_on_top = False
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -138,17 +171,26 @@ class FramelessDesktopWidget(QWebEngineView):
         js = f"window.__aurexSetState && window.__aurexSetState('{state_str}', '{safe_t}');"
         QTimer.singleShot(0, lambda: self.page().runJavaScript(js))
 
-    def set_ui_transcript(self, query: str, reply: str):
-        safe_q = query.replace("'", "\\'")
-        safe_r = reply.replace("'", "\\'")[:140]
-        js = f"window.__aurexOnTranscript && window.__aurexOnTranscript('{safe_q}', '{safe_r}');"
+    def set_ui_user_message(self, text: str):
+        """Show user transcript immediately on UI before agent finishes."""
+        safe_t = text.replace("'", "\\'")
+        js = f"window.__aurexSetUserMessage && window.__aurexSetUserMessage('{safe_t}');"
+        QTimer.singleShot(0, lambda: self.page().runJavaScript(js))
+
+    def set_ui_assistant_message(self, text: str):
+        """Show agent response on UI."""
+        safe_t = text.replace("'", "\\'")[:140]
+        js = f"window.__aurexSetAssistantMessage && window.__aurexSetAssistantMessage('{safe_t}');"
         QTimer.singleShot(0, lambda: self.page().runJavaScript(js))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            if self.conversation_manager and self.conversation_manager.tts.is_speaking:
-                self.conversation_manager.tts.stop()
+            # If speaking, clicking widget immediately cuts off speech
+            if self.controller and self.controller.tts.is_speaking:
+                self.controller.tts.stop()
+
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            # If shrunken into pill shape, clicking expands to full card
             if self._shrunken:
                 QTimer.singleShot(0, self.expand)
         else:
@@ -164,28 +206,9 @@ class FramelessDesktopWidget(QWebEngineView):
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
-            if self.conversation_manager:
-                if self.conversation_manager.tts.is_speaking:
-                    logger.info("Interruption triggered via Space bar.")
-                    self.conversation_manager.tts.stop()
-                else:
-                    logger.info("Push-to-talk triggered via Space bar.")
-                    self.conversation_manager.activate_conversation(greeting="")
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def keyReleaseEvent(self, event):
-        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
-            event.accept()
-            return
-        super().keyReleaseEvent(event)
-
 
 def launch_widget(port: int = 8765):
-    """Main application entry point initializing GUI and clean voice subsystem."""
+    """Main application entry point initializing GUI and clean push-to-talk voice subsystem."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     server_thread = threading.Thread(
@@ -203,39 +226,25 @@ def launch_widget(port: int = 8765):
     widget = FramelessDesktopWidget(url=f"http://127.0.0.1:{port}/")
     set_widget_action_handler(widget.handle_action)
 
-    # Initialize the Single Voice Architecture
-    cm = get_conversation_manager()
-    widget.conversation_manager = cm
-    cm.router.set_ui_action_handler(widget.handle_action)
+    # Initialize Push-To-Talk Voice Controller
+    ctrl = get_voice_controller()
+    widget.controller = ctrl
+    ctrl.set_ui_action_handler(widget.handle_action)
 
-    # Bind UI state notifications to WebEngineView
-    def on_state_changed(state: VoiceState, text: str):
-        # Map state to UI representation
-        ui_state = "IDLE"
-        if state in (VoiceState.LISTENING, VoiceState.RECORDING):
-            ui_state = "LISTENING"
-        elif state in (VoiceState.THINKING, VoiceState.TRANSCRIBING):
-            ui_state = "THINKING"
-        elif state == VoiceState.SPEAKING:
-            ui_state = "SPEAKING"
-        elif state == VoiceState.ERROR:
-            ui_state = "ERROR"
+    # Bind UI events
+    ctrl.on("state", lambda state, text: widget.set_ui_state(state, text))
+    ctrl.on("user_transcript", lambda text: widget.set_ui_user_message(text))
+    ctrl.on("assistant_response", lambda text: widget.set_ui_assistant_message(text))
 
-        widget.set_ui_state(ui_state, text)
-
-    cm.on("state_changed", on_state_changed)
-    cm.on("wake_detected", lambda trigger: QTimer.singleShot(0, widget.come_up))
-    cm.on("response", lambda q, r: widget.set_ui_transcript(q, r))
-    cm.on("mic_status", lambda online, dev: None if online else widget.set_ui_state("ERROR", "MIC OFFLINE"))
-
-    # Start the clean voice pipeline
-    cm.start()
+    # Install application-wide event filter for Space bar push-to-talk
+    key_filter = GlobalKeyFilter(widget)
+    app.installEventFilter(key_filter)
 
     # Widget starts VISIBLE on top-right, pinned above all apps
     widget.show()
     widget.come_up()
 
-    logger.info("AUREX Clean Voice System active on desktop.")
+    logger.info("AUREX Push-To-Talk Voice System active on desktop.")
     sys.exit(app.exec())
 
 

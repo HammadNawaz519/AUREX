@@ -33,6 +33,64 @@ SPEECH_PITCH  = "-2Hz"
 SPEECH_VOLUME = "+10%"
 
 
+def sanitize_speech_text(text: str) -> str:
+    """
+    Sanitize text before speech:
+      - Strip markdown code blocks, backticks, JSON, and HTML
+      - Strip Windows paths and URLs
+      - Intercept and convert terminal stdout/stderr dumps to clean conversational summaries
+      - Limit speech to 1-2 natural sentences
+    """
+    clean = text.strip()
+    if not clean:
+        return ""
+
+    import re
+    # Remove markdown code blocks ```...```
+    clean = re.sub(r"```[\s\S]*?```", "", clean)
+    # Remove inline code `...`
+    clean = re.sub(r"`[^`]*`", "", clean)
+    # Remove HTML tags
+    clean = re.sub(r"<[^>]+>", "", clean)
+    # Remove file paths (e.g. C:\... or D:\...)
+    clean = re.sub(r"[a-zA-Z]:\\[\w\\\.\-]+", "the file", clean)
+    # Remove URLs
+    clean = re.sub(r"https?://\S+", "", clean)
+
+    # Detect terminal / shell output indicators
+    lines = [l.strip() for l in clean.splitlines() if l.strip()]
+    terminal_indicators = [
+        "exit code", "returncode", "stdout", "stderr", "ps ", "powershell", "cmd.exe",
+        "directory of", "bytes free", "compiling", "finished dev", "traceback",
+        "lastwritetime", "mode    length", "npm err", "pip install", "error: "
+    ]
+    is_terminal = any(
+        any(ind in l.lower() for ind in terminal_indicators)
+        for l in lines
+    )
+    if is_terminal:
+        if any("success" in l.lower() or "completed" in l.lower() or "0" in l.lower() or "finished" in l.lower() for l in lines):
+            return "Command executed successfully, Hammad."
+        else:
+            return "Command finished with an error. Please check the terminal."
+
+    # Keep only natural sentences (first 2 short sentences, under 180 chars)
+    sentences = re.split(r"(?<=[.!?])\s+", " ".join(lines))
+    speakable = []
+    total_len = 0
+    for s in sentences:
+        s_clean = s.strip()
+        if not s_clean:
+            continue
+        if total_len + len(s_clean) > 180:
+            break
+        speakable.append(s_clean)
+        total_len += len(s_clean)
+
+    result = " ".join(speakable).strip()
+    return result if result else "Done, Hammad."
+
+
 class TTSEngine:
     """Thread-safe, interruptible text-to-speech engine."""
 
@@ -108,14 +166,7 @@ class TTSEngine:
 
     def speak(self, text: str):
         """Enqueue text for speech output."""
-        clean = text.strip()
-        if not clean:
-            return
-
-        # Filter out markdown code blocks and long technical dumps
-        lines = clean.splitlines()
-        speakable_lines = [l for l in lines if not l.startswith("```") and len(l) < 300]
-        speakable = " ".join(speakable_lines[:3]).strip()
+        speakable = sanitize_speech_text(text)
         if not speakable:
             return
 

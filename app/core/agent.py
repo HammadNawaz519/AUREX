@@ -125,8 +125,8 @@ class AurexAgent:
         if not clean_text:
             return "I am listening. How can I assist you, sir?"
 
-        # Strip wake word
-        from app.voice.wakeword import WakeWordDetector
+        # Strip wake word if present
+        from app.voice.speech import WakeWordDetector
         has_wake, stripped = WakeWordDetector.check_and_strip(clean_text)
         if has_wake:
             if not stripped:
