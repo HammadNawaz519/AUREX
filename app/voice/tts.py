@@ -129,16 +129,11 @@ class TextToSpeech:
             speaker.Volume = 100
             speaker.Speak(text)
         except Exception:
-            clean_safe = text.replace('"', '').replace("'", "")
+            clean_safe = text.replace('"', ' ').replace("'", " ")
             import subprocess
-            ps = (
-                "Add-Type -AssemblyName System.speech; "
-                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                "$s.Rate = -1; "
-                f"$s.Speak('{clean_safe}')"
-            )
+            ps = f"(New-Object -ComObject SAPI.SpVoice).Speak('{clean_safe}')"
             subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps],
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
 

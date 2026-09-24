@@ -12,18 +12,27 @@ class SpeechRecognizer:
     def __init__(self):
         pass
 
-    def transcribe(self, wav_bytes: bytes) -> str:
+    def transcribe(self, audio_bytes: bytes, filename: Optional[str] = None) -> str:
         """
-        Transcribe WAV audio bytes to text using the active AI provider (Groq Whisper-v3-turbo).
+        Transcribe audio bytes (WAV or WebM) using the active AI provider (Groq Whisper-v3-turbo).
         """
-        if not wav_bytes or len(wav_bytes) < 1000:
+        if not audio_bytes or len(audio_bytes) < 400:
             return ""
+
+        # Auto-detect audio container format from header magic bytes
+        if filename is None:
+            if audio_bytes.startswith(b"\x1a\x45\xdf\xa3") or audio_bytes.startswith(b"\x1aE\xdf\xa3"):
+                filename = "audio.webm"
+            elif audio_bytes.startswith(b"RIFF"):
+                filename = "audio.wav"
+            else:
+                filename = "audio.wav"
 
         try:
             provider = get_ai_provider()
-            text = provider.transcribe_audio(wav_bytes, filename="audio.wav")
+            text = provider.transcribe_audio(audio_bytes, filename=filename)
             clean = text.strip()
-            logger.info(f"Transcribed voice input: '{clean}'")
+            logger.info(f"Transcribed voice input ({filename}): '{clean}'")
             return clean
         except Exception as e:
             logger.error(f"Speech transcription failed: {e}")

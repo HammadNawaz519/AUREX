@@ -16,11 +16,45 @@ from app.server import run_server, set_widget_action_handler
 
 logger = logging.getLogger("AurexDesktopWidget")
 
-# Widget dimensions (Ample padding to ensure bottom corners are perfectly rounded, zero clipping)
 CARD_W  = 384
-CARD_H  = 205
-ORBS_W  = 92    # shrunken circular orb size
-ORBS_H  = 92
+CARD_H  = 195
+SHRINK_W = 180
+SHRINK_H = 54
+
+
+def find_live_input_device():
+    """Probe audio devices to find the live microphone with active signal."""
+    import sounddevice as sd
+    devices = sd.query_devices()
+
+    # Prioritize WASAPI input devices (hostapi == 3)
+    wasapi_candidates = []
+    other_candidates = []
+    for i, d in enumerate(devices):
+        if d['max_input_channels'] > 0:
+            name = d['name'].lower()
+            if 'speaker' not in name and 'stereo' not in name:
+                if d.get('hostapi') == 3:
+                    wasapi_candidates.append(i)
+                else:
+                    other_candidates.append(i)
+
+    for dev_idx in wasapi_candidates + other_candidates:
+        d = devices[dev_idx]
+        sr = int(d.get('default_samplerate', 16000))
+        ch = min(2, d['max_input_channels'])
+        try:
+            rec = sd.rec(int(sr * 0.1), samplerate=sr, channels=ch, dtype='int16', device=dev_idx)
+            sd.wait()
+            rms = float(np.sqrt(np.mean(rec.astype(np.float32) ** 2)))
+            if 5.0 < rms < 6000.0:
+                logger.info(f"Auto-selected live microphone: Device {dev_idx} ({d['name']}) at {sr}Hz, ch={ch}, RMS={rms:.1f}")
+                return dev_idx, sr, ch
+        except Exception:
+            continue
+
+    logger.warning("Could not probe live mic, using system default.")
+    return None, 16000, 1
 
 
 class FramelessDesktopWidget(QWebEngineView):
@@ -53,7 +87,7 @@ class FramelessDesktopWidget(QWebEngineView):
                 )
         self.page().featurePermissionRequested.connect(on_permission)
 
-        # Position top-right corner
+        self.listener: 'AurexBackgroundListener' = None
         self._position_card()
         self.load(QUrl(url))
         self.send_to_back()
@@ -65,31 +99,28 @@ class FramelessDesktopWidget(QWebEngineView):
         self.setGeometry(x, y, CARD_W, CARD_H)
         self.setFixedSize(CARD_W, CARD_H)
 
-    def _position_orb(self):
+    def _position_shrink(self):
         screen = QApplication.primaryScreen().availableGeometry()
-        x = screen.x() + screen.width() - ORBS_W - 20
+        x = screen.x() + screen.width() - SHRINK_W - 20
         y = screen.y() + 20
-        self.setGeometry(x, y, ORBS_W, ORBS_H)
-        self.setFixedSize(ORBS_W, ORBS_H)
+        self.setGeometry(x, y, SHRINK_W, SHRINK_H)
+        self.setFixedSize(SHRINK_W, SHRINK_H)
 
     # ── Z-order & Visibility ───────────────────────────────────────────────────
 
     def come_up(self):
         """Bring widget above ALL applications (Chrome, VS Code, full-screen tabs)."""
         self._is_on_top = True
-        self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
-        )
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.show()
         self.raise_()
         self.activateWindow()
 
-        # Force Win32 HWND_TOPMOST so it stays pinned above all tabs
+        # Force Win32 HWND_TOPMOST
         try:
             import ctypes
             hwnd = int(self.winId())
-            # HWND_TOPMOST = -1, SWP_NOMOVE = 0x0002, SWP_NOSIZE = 0x0001, SWP_SHOWWINDOW = 0x0040
             ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
         except Exception as e:
             logger.debug(f"Win32 SetWindowPos error: {e}")
@@ -115,11 +146,11 @@ class FramelessDesktopWidget(QWebEngineView):
         logger.info("AUREX: sent to background.")
 
     def shrink(self):
-        """Collapse to round orb-only circle."""
+        """Collapse to compact pill badge."""
         self._shrunken = True
-        self._position_orb()
+        self._position_shrink()
         self.page().runJavaScript("window.__aurexShrink && window.__aurexShrink();")
-        logger.info("AUREX: shrunken to round orb.")
+        logger.info("AUREX: shrunken to compact badge.")
 
     def expand(self):
         """Restore full card."""
@@ -143,7 +174,6 @@ class FramelessDesktopWidget(QWebEngineView):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            # Clicking the shrunken orb expands it back to the full card
             if self._shrunken:
                 QTimer.singleShot(0, self.expand)
         else:
@@ -159,81 +189,120 @@ class FramelessDesktopWidget(QWebEngineView):
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
-    # ── Space key bridge ──────────────────────────────────────────────────────
+    # ── Space key push-to-talk bridge ─────────────────────────────────────────
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
-            self.page().runJavaScript("window.__aurexStartListen && window.__aurexStartListen();")
+            if self.listener:
+                self.listener.start_manual()
             event.accept()
             return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
-            self.page().runJavaScript("window.__aurexStopListen && window.__aurexStopListen();")
+            if self.listener:
+                self.listener.stop_manual()
             event.accept()
             return
         super().keyReleaseEvent(event)
 
 
-# ─── Continuous Background Microphone Listener ───────────────────────────────────
+# ─── High-Performance Continuous Background Microphone Listener ───────────────────
 
 class AurexBackgroundListener:
-    """Always-on microphone listener with dynamic noise floor and active conversation window."""
+    """Always-on microphone listener with live device auto-selection and fast end-of-speech detection."""
 
     def __init__(self, widget: FramelessDesktopWidget):
         self.widget = widget
         self.running = False
-        self.thread = None
         self.audio_queue = queue.Queue()
         self.active_until = 0.0
         self.tts_busy_until = 0.0
+        self.is_manual_recording = False
+        self.manual_buffer = []
+
+        # Find working mic device
+        self.dev_idx, self.sample_rate, self.channels = find_live_input_device()
 
     def start(self):
         self.running = True
-        # Asynchronous worker thread for processing audio without blocking audio stream
         threading.Thread(target=self._worker_loop, daemon=True, name="AurexAudioWorker").start()
-        # Audio stream capture thread
-        self.thread = threading.Thread(target=self._listen_loop, daemon=True, name="AurexBackgroundMic")
-        self.thread.start()
+        threading.Thread(target=self._listen_loop, daemon=True, name="AurexBackgroundMic").start()
 
     def stop(self):
         self.running = False
 
     def mark_tts_speaking(self, duration_sec: float):
-        self.tts_busy_until = time.time() + duration_sec + 0.4
+        self.tts_busy_until = time.time() + duration_sec + 0.35
+
+    def start_manual(self):
+        self.is_manual_recording = True
+        self.manual_buffer.clear()
+        QTimer.singleShot(0, lambda: self.widget.page().runJavaScript(
+            "window.__aurexSetState && window.__aurexSetState('LISTENING', 'Listening...');"
+        ))
+
+    def stop_manual(self):
+        if not self.is_manual_recording:
+            return
+        self.is_manual_recording = False
+        if len(self.manual_buffer) > 2:
+            audio_arr = np.concatenate(self.manual_buffer, axis=0)
+            wav_bytes = self._to_wav(audio_arr, self.sample_rate)
+            self.audio_queue.put(wav_bytes)
+        else:
+            QTimer.singleShot(0, lambda: self.widget.page().runJavaScript(
+                "window.__aurexSetState && window.__aurexSetState('IDLE');"
+            ))
+        self.manual_buffer.clear()
 
     def _listen_loop(self):
         import sounddevice as sd
-        sample_rate = 16000
-        block_size = int(sample_rate * 0.1)  # 100ms chunks
-        noise_floor = 120.0
+        block_size = int(self.sample_rate * 0.1)  # 100ms
+        noise_floor = 60.0
         buffer = []
         is_speech = False
         silence_count = 0
-        silence_limit = 7  # 700ms silence to finalize speech
+        silence_limit = 3  # Fast 300ms silence detection — instant start!
 
-        logger.info("AUREX background audio listener initialized — active and ready.")
+        logger.info(f"AUREX listener active on Device {self.dev_idx} ({self.sample_rate}Hz, ch={self.channels}).")
 
         while self.running:
             try:
-                with sd.InputStream(samplerate=sample_rate, channels=1, dtype="int16") as stream:
+                with sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=self.channels,
+                    dtype="int16",
+                    device=self.dev_idx,
+                ) as stream:
                     while self.running:
                         data, _ = stream.read(block_size)
 
-                        # If AUREX is speaking aloud through speakers, skip recording to prevent feedback loop
+                        # Convert to mono if stereo
+                        if self.channels > 1:
+                            mono = data.mean(axis=1).astype(np.int16).reshape(-1, 1)
+                        else:
+                            mono = data
+
+                        # Manual spacebar recording handling
+                        if self.is_manual_recording:
+                            self.manual_buffer.append(mono)
+                            continue
+
+                        # Mute mic while AUREX is speaking through speakers
                         if time.time() < self.tts_busy_until:
                             buffer.clear()
                             is_speech = False
                             silence_count = 0
                             continue
 
-                        rms = float(np.sqrt(np.mean(data.astype(np.float32) ** 2)))
+                        rms = float(np.sqrt(np.mean(mono.astype(np.float32) ** 2)))
 
-                        # Dynamic voice threshold tracking ambient room level
+                        # Dynamic voice threshold
                         if not is_speech:
-                            noise_floor = noise_floor * 0.96 + rms * 0.04
-                        threshold = max(55.0, min(320.0, noise_floor * 1.5 + 30.0))
+                            noise_floor = noise_floor * 0.95 + rms * 0.05
+                        threshold = max(28.0, min(240.0, noise_floor * 1.4 + 18.0))
 
                         if rms > threshold:
                             if not is_speech:
@@ -242,16 +311,16 @@ class AurexBackgroundListener:
                                 QTimer.singleShot(0, lambda: self.widget.page().runJavaScript(
                                     "window.__aurexSetState && window.__aurexSetState('LISTENING', 'Listening...');"
                                 ))
-                            buffer.append(data)
+                            buffer.append(mono)
                             silence_count = 0
                         elif is_speech:
-                            buffer.append(data)
+                            buffer.append(mono)
                             silence_count += 1
-                            if silence_count > silence_limit:
+                            if silence_count >= silence_limit:
                                 is_speech = False
-                                if len(buffer) > 4:  # At least 400ms audio captured
+                                if len(buffer) >= 3:  # At least 300ms audio captured
                                     audio_arr = np.concatenate(buffer, axis=0)
-                                    wav_bytes = self._to_wav(audio_arr, sample_rate)
+                                    wav_bytes = self._to_wav(audio_arr, self.sample_rate)
                                     self.audio_queue.put(wav_bytes)
                                 else:
                                     QTimer.singleShot(0, lambda: self.widget.page().runJavaScript(
@@ -260,8 +329,8 @@ class AurexBackgroundListener:
                                 buffer.clear()
                                 silence_count = 0
             except Exception as e:
-                logger.warning(f"Background audio stream error: {e}. Retrying in 2 seconds...")
-                time.sleep(2.0)
+                logger.warning(f"Audio stream error: {e}. Retrying in 1.5s...")
+                time.sleep(1.5)
 
     def _to_wav(self, audio_data: np.ndarray, sample_rate: int) -> bytes:
         buf = io.BytesIO()
@@ -287,7 +356,7 @@ class AurexBackgroundListener:
                 ))
 
                 rec = get_recognizer()
-                transcript = rec.transcribe(wav_bytes)
+                transcript = rec.transcribe(wav_bytes, filename="audio.wav")
                 if not transcript:
                     QTimer.singleShot(0, lambda: self.widget.page().runJavaScript(
                         "window.__aurexSetState && window.__aurexSetState('IDLE');"
@@ -339,7 +408,7 @@ class AurexBackgroundListener:
                 ]):
                     self.active_until = time.time() + 25.0
                     QTimer.singleShot(0, self.widget.shrink)
-                    reply = "Shrinking to orb."
+                    reply = "Shrinking to compact mode."
                     word_count = len(reply.split())
                     self.mark_tts_speaking(max(1.8, word_count * 0.4))
                     get_tts().speak(reply)
@@ -408,14 +477,15 @@ def launch_widget(port: int = 8765):
     widget = FramelessDesktopWidget(url=f"http://127.0.0.1:{port}/")
     set_widget_action_handler(widget.handle_action)
 
-    # Start the continuous background audio listener
+    # Start live microphone listener
     listener = AurexBackgroundListener(widget)
+    widget.listener = listener
     listener.start()
 
     widget.show()
     widget.send_to_back()
 
-    logger.info("AUREX widget active — continuous listening active on desktop.")
+    logger.info("AUREX desktop widget active — always listening.")
     sys.exit(app.exec())
 
 
