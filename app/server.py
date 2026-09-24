@@ -118,16 +118,27 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({"error": "Empty command"}).encode("utf-8"))
                     return
 
+                from app.voice.tts import get_tts
+                from app.voice.wakeword import WakeWordDetector
+
                 lower_cmd = command_text.lower()
+                _, clean_cmd = WakeWordDetector.check_and_strip(command_text)
+
                 if any(p in lower_cmd for p in ["come up", "bring up", "come to front", "pop up", "wake up"]):
                     trigger_widget_action("come_up")
-                    response_text = "I am here on top of your apps."
+                    response_text = "I am here on top of your apps, sir."
                 elif any(p in lower_cmd for p in ["go back", "send to back", "hide behind", "go to wallpaper", "back to wallpaper"]):
                     trigger_widget_action("go_back")
-                    response_text = "Pinned back to your desktop wallpaper."
+                    response_text = "Pinned back to your desktop wallpaper, sir."
                 else:
                     agent = get_agent()
-                    response_text = agent.process_input(command_text)
+                    response_text = agent.process_input(clean_cmd or command_text)
+
+                # If desktop widget or speak requested, speak response through desktop speakers
+                should_speak = data.get("speak", False)
+                is_widget = self.headers.get("X-Client") == "desktop-widget" or data.get("client") == "desktop-widget"
+                if should_speak or is_widget:
+                    get_tts().speak(response_text)
 
                 self._set_cors_headers(200)
                 self.wfile.write(json.dumps({
@@ -144,6 +155,9 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/voice":
             audio_bytes = self.rfile.read(content_length)
             try:
+                from app.voice.tts import get_tts
+                from app.voice.wakeword import WakeWordDetector
+
                 rec = get_recognizer()
                 transcript = rec.transcribe(audio_bytes)
                 if not transcript:
@@ -151,20 +165,25 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({
                         "success": False,
                         "transcript": "",
-                        "response": "No speech detected. Please speak clearly and try again."
+                        "response": "No speech detected. Standing by for your command, sir."
                     }).encode("utf-8"))
                     return
 
                 lower_trans = transcript.lower()
+                _, clean_trans = WakeWordDetector.check_and_strip(transcript)
+
                 if any(p in lower_trans for p in ["come up", "bring up", "come to front", "pop up", "wake up"]):
                     trigger_widget_action("come_up")
-                    response_text = "I am here on top of your apps."
+                    response_text = "I am here on top of your apps, sir."
                 elif any(p in lower_trans for p in ["go back", "send to back", "hide behind", "go to wallpaper", "back to wallpaper"]):
                     trigger_widget_action("go_back")
-                    response_text = "Pinned back to your desktop wallpaper."
+                    response_text = "Pinned back to your desktop wallpaper, sir."
                 else:
                     agent = get_agent()
-                    response_text = agent.process_input(transcript)
+                    response_text = agent.process_input(clean_trans or transcript)
+
+                # Voice interactions in JARVIS mode speak aloud through system speakers
+                get_tts().speak(response_text)
 
                 self._set_cors_headers(200)
                 self.wfile.write(json.dumps({

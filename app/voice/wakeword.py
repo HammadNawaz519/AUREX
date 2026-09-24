@@ -17,11 +17,12 @@ class WakeWordDetector:
         custom_wake = settings.wake_word.lower()
 
         clean = text.strip()
-        # Patterns for Hey Aurex, Aurex, Hi Aurex, Ok Aurex
+        # Patterns for Hey Aurex, Aurex, Hi Aurex, Ok Aurex, Jarvis
         patterns = [
             rf"^(?:hey|hi|hello|ok|okay)?\s*{re.escape(custom_wake)}[,\.\?!;:]*\s*",
             r"^(?:hey|hi|hello|ok|okay)?\s*aurex[,\.\?!;:]*\s*",
-            r"^(?:hey|hi|hello|ok|okay)?\s*rex[,\.\?!;:]*\s*"
+            r"^(?:hey|hi|hello|ok|okay)?\s*rex[,\.\?!;:]*\s*",
+            r"^(?:hey|hi|hello|ok|okay)?\s*jarvis[,\.\?!;:]*\s*"
         ]
 
         for p in patterns:

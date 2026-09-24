@@ -79,6 +79,9 @@ class AIRouter:
         Evaluate user request and determine the optimal, cost-efficient, and privacy-respecting route.
         """
         clean = user_text.lower().strip()
+        from app.voice.wakeword import WakeWordDetector
+        _, clean = WakeWordDetector.check_and_strip(clean)
+
         settings = get_settings()
         mode = settings.privacy_mode.lower()
         online = self.is_online()
@@ -95,8 +98,16 @@ class AIRouter:
         if any(k in clean for k in ["cpu", "ram", "memory usage", "what's using cpu", "system info", "battery", "storage usage"]):
             return RouteTarget.LOCAL, {"category": "system_telemetry", "cost": "$0.00"}
 
-        # Application control (open, close, launch, switch)
-        if re.match(r"^(?:open|launch|close|exit|quit|switch\s+to)\s+[a-zA-Z0-9_\-\.\s]+$", clean):
+        # Time, Date, Status, Greetings
+        if any(k in clean for k in ["what time is it", "what's the time", "current time", "what date is it", "today's date", "who are you", "what can you do", "introduce yourself"]):
+            return RouteTarget.LOCAL, {"category": "system_time_status", "cost": "$0.00"}
+
+        # Desktop & Window management, volume
+        if any(k in clean for k in ["minimize", "show desktop", "list windows", "open windows", "focus window", "mute", "unmute", "volume"]):
+            return RouteTarget.LOCAL, {"category": "window_management", "cost": "$0.00"}
+
+        # Application control (open, close, launch, switch, start, run)
+        if re.match(r"^(?:open|launch|close|exit|quit|switch\s+to|start|run)\s+[a-zA-Z0-9_\-\.\s]+$", clean):
             # If not an explanatory request, keep 100% local
             if not any(k in clean for k in ["why", "how", "explain", "tutorial"]):
                 return RouteTarget.LOCAL, {"category": "application_control", "cost": "$0.00"}

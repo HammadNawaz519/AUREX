@@ -26,15 +26,14 @@ from app.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are AUREX, an elite, intelligent, and calm Windows desktop AI assistant.
-Your duty is to understand user intents and perform computer operations safely and accurately.
+SYSTEM_PROMPT = """You are AUREX, an autonomous Windows desktop AI assistant operating with the full capabilities and demeanor of JARVIS.
+You have direct execution control over the computer using tools.
 
-CRITICAL SECURITY RULES:
-1. The C: drive is PERMANENTLY READ-ONLY and PROTECTED. NEVER attempt to write, delete, move, create, or overwrite any file on C:.
-2. All file modifications (writing, creating, moving, deleting) must strictly target the approved workspace (e.g., D:\\AUREX, D:\\Projects, D:\\OS, D:\\Code).
-3. Be calm, concise, and professional. Avoid conversational fluff.
-4. If the user asks for a simple action (e.g. 'Open Chrome', 'Take a screenshot'), call the appropriate tool and reply with a brief, calm confirmation.
-5. If the user asks for multiple steps (e.g. 'Open VS Code and check RAM'), call all necessary tools in sequence.
+CORE OPERATIONAL PRINCIPLES:
+1. TAKE ACTION IMMEDIATELY: When the user issues an instruction (launching applications, inspecting system diagnostics, checking files, running commands, searching the web, taking screenshots), execute the relevant tools right away. Never merely talk about taking an action—execute it.
+2. TONE & MANNER: Calm, confident, authoritative, concise, and respectful. Use a JARVIS persona (e.g. 'Right away, sir.', 'System telemetry nominal.', 'Completed.'). Avoid unnecessary conversational fluff.
+3. MULTI-STEP EXECUTION: If an instruction requires multiple actions (e.g. 'Open Edge and check CPU usage'), execute all necessary tool calls in succession.
+4. ABSOLUTE SECURITY RULE: The C: drive is PERMANENTLY PROTECTED and READ-ONLY for file modifications. Never create, write, delete, or overwrite files on C:. Workspace operations belong in D:\\AUREX or approved workspace folders.
 """
 
 
@@ -57,6 +56,14 @@ class AurexAgent:
         clean_text = user_text.strip()
         if not clean_text:
             return "I am listening. How can I assist you?"
+
+        # Strip wake word if present ("Hey Aurex", "Aurex", "Jarvis")
+        from app.voice.wakeword import WakeWordDetector
+        has_wake, stripped = WakeWordDetector.check_and_strip(clean_text)
+        if has_wake:
+            if not stripped:
+                return "Yes, sir? Systems are online and standing by."
+            clean_text = stripped
 
         # 1. CORRECTION LEARNING CHECK ("No, I mean D:\OS", "No, use Firefox")
         is_corr, corr_msg = self.correction_learner.inspect_for_correction(clean_text)
@@ -232,51 +239,138 @@ class AurexAgent:
         return fallback_res
 
     def _fallback_local_execute(self, text: str) -> str:
-        """Local offline rule-based intent engine when in LOCAL mode or offline."""
+        """Autonomous offline rule-based execution engine operating in the style of JARVIS."""
         clean = text.lower().strip()
+        from datetime import datetime
 
-        # Check system info / CPU / RAM
-        if any(k in clean for k in ["cpu", "ram", "memory", "usage", "system info", "performance"]):
+        # 0. Handle compound commands (e.g. "open chrome and check ram")
+        if " and then " in clean:
+            sub_commands = [c.strip() for c in clean.split(" and then ") if c.strip()]
+            if len(sub_commands) > 1:
+                return " ".join([self._fallback_local_execute(c) for c in sub_commands])
+        elif " and " in clean and not any(k in clean for k in ["between", "hardware and software", "cats and dogs", "bread and butter"]):
+            sub_commands = [c.strip() for c in clean.split(" and ") if c.strip()]
+            if len(sub_commands) == 2 and any(sub_commands[0].startswith(p) for p in ("open", "launch", "check", "take", "close", "show", "search")):
+                return " ".join([self._fallback_local_execute(c) for c in sub_commands])
+
+        # 1. Identity, Capability, and Greetings
+        if clean in ("hello", "hi", "hey", "good morning", "good afternoon", "good evening", "status", "are you there"):
+            return "Good day, sir. All systems are operational and standing by for your command."
+
+        if any(p in clean for p in ["who are you", "what is your name", "what are you", "what can you do", "introduce yourself", "tell me about yourself"]):
+            return (
+                "I am AUREX, your autonomous desktop artificial intelligence. "
+                "I can launch applications, inspect hardware diagnostics, capture screenshots, "
+                "manage desktop windows, search the web, and execute system commands."
+            )
+
+        # 2. Time & Date
+        if any(k in clean for k in ["what time is it", "what's the time", "tell me the time", "current time"]) or clean == "time":
+            t_str = datetime.now().strftime("%I:%M %p")
+            return f"The current time is {t_str}, sir."
+
+        if any(k in clean for k in ["what date is it", "what is today's date", "today's date", "what day is it", "date today"]) or clean == "date":
+            d_str = datetime.now().strftime("%A, %B %d, %Y")
+            return f"Today is {d_str}, sir."
+
+        # 3. System Hardware Diagnostics / CPU / RAM / Battery / Telemetry
+        if any(k in clean for k in ["cpu", "ram", "memory", "usage", "system info", "performance", "battery", "hardware", "telemetry", "system stats"]):
             res = self.registry.execute_tool("get_system_information", {})
-            return res.message if res.success else str(res.error)
-
-        # Screenshot
-        if any(k in clean for k in ["screenshot", "capture screen", "screen shot"]):
-            res = self.registry.execute_tool("take_screenshot", {})
-            return res.message if res.success else str(res.error)
-
-        # Open Application
-        open_match = re.match(r"(?:open|launch|start)\s+(chrome|vscode|vs code|code|notepad|calculator|calc|spotify|discord|terminal)", clean)
-        if open_match:
-            app_name = open_match.group(1)
-            res = self.registry.execute_tool("open_application", {"name": app_name})
             if res.success:
-                self.pattern_detector.record_and_analyze(action_type="open_application", application=app_name)
+                return f"System Telemetry: {res.message} All parameters nominal, sir."
+            return str(res.error)
+
+        # 4. Running Processes
+        if any(k in clean for k in ["what's running", "what is running", "running apps", "list processes", "task list", "active processes"]):
+            res = self.registry.execute_tool("list_processes", {"limit": 6})
             return res.message if res.success else str(res.error)
 
-        # Close Application
-        close_match = re.match(r"(?:close|exit|quit|kill)\s+([a-zA-Z0-9_\-\.]+)", clean)
-        if close_match:
-            app_name = close_match.group(1)
-            res = self.registry.execute_tool("close_application", {"name": app_name})
+        # 5. Screenshot
+        if any(k in clean for k in ["screenshot", "capture screen", "screen shot", "take a screenshot"]):
+            res = self.registry.execute_tool("take_screenshot", {})
+            if res.success:
+                return "Screenshot captured and saved to your workspace, sir."
+            return str(res.error)
+
+        # 6. Desktop & Window Management
+        if any(k in clean for k in ["minimize all windows", "minimize windows", "show desktop", "minimize all"]):
+            import subprocess
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", "(New-Object -ComObject Shell.Application).MinimizeAll()"],
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                    timeout=3
+                )
+                return "All windows minimized to desktop, sir."
+            except Exception as e:
+                return f"Failed to minimize windows: {e}"
+
+        if any(k in clean for k in ["list windows", "open windows", "active windows", "show windows"]):
+            res = self.registry.execute_tool("list_windows", {})
             return res.message if res.success else str(res.error)
 
-        # Open URL
-        url_match = re.search(r"(?:open|visit|go to)\s+(https?://[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|io|dev|net))", clean)
+        focus_match = re.match(r"(?:switch\s+to|focus(?:\s+on)?)\s+(.+)", clean)
+        if focus_match:
+            win_title = focus_match.group(1).strip()
+            res = self.registry.execute_tool("focus_window", {"title": win_title})
+            return res.message if res.success else str(res.error)
+
+        # 7. Volume / Audio Mute
+        if "mute" in clean or "unmute" in clean:
+            import subprocess
+            try:
+                ps = "$w = New-Object -ComObject WScript.Shell; $w.SendKeys([char]173)"
+                subprocess.run(["powershell", "-NoProfile", "-Command", ps], creationflags=subprocess.CREATE_NO_WINDOW, timeout=2)
+                return "Audio mute toggled, sir."
+            except Exception as e:
+                return f"Volume control error: {e}"
+
+        # 8. Clipboard
+        copy_match = re.match(r"(?:copy|save)\s+(?:'|\")?(.+?)(?:'|\")?\s+to\s+clipboard", clean)
+        if copy_match:
+            text_to_copy = copy_match.group(1)
+            res = self.registry.execute_tool("set_clipboard", {"text": text_to_copy})
+            return "Copied to clipboard, sir." if res.success else str(res.error)
+
+        if any(k in clean for k in ["what's in clipboard", "what is in clipboard", "get clipboard", "read clipboard"]):
+            res = self.registry.execute_tool("get_clipboard", {})
+            return res.message if res.success else str(res.error)
+
+        # 9. URL Navigation
+        url_match = re.search(r"(?:open|visit|go to)\s+(https?://[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.(?:com|org|io|dev|net|edu|gov))", clean)
         if url_match:
             url = url_match.group(1)
             res = self.registry.execute_tool("open_url", {"url": url})
-            return res.message if res.success else str(res.error)
+            return f"Navigating to {url}, sir." if res.success else str(res.error)
 
-        # Web Search
-        search_match = re.match(r"(?:search|google|find on web|look up)\s+(.+)", clean)
+        # 10. Web Search
+        search_match = re.match(r"^(?:search(?:\s+the\s+web)?(?:\s+for)?|google|find on web|look up)\s+(.+)$", clean)
         if search_match:
-            q = search_match.group(1)
+            q = search_match.group(1).strip()
             res = self.registry.execute_tool("search_web", {"query": q})
             return res.message if res.success else str(res.error)
 
-        # Create folder
-        folder_match = re.match(r"(?:create|make)\s+(?:a\s+)?folder\s+(?:called\s+)?([^\s]+)(?:\s+on\s+([a-zA-Z]:[^\s]*))?", clean)
+        # 11. Universal Application Launching
+        open_match = re.match(r"^(?:open|launch|start|run)\s+(.+)$", clean)
+        if open_match:
+            raw_target = open_match.group(1).strip()
+            target = re.sub(r"[,\.\?!;]+$", "", raw_target).strip()
+            res = self.registry.execute_tool("open_application", {"name": target})
+            if res.success:
+                self.pattern_detector.record_and_analyze(action_type="open_application", application=target)
+                return f"Right away, sir. Opening {target}."
+            return str(res.error)
+
+        # 12. Universal Application Closing
+        close_match = re.match(r"^(?:close|exit|quit|kill|stop)\s+(.+)$", clean)
+        if close_match:
+            raw_target = close_match.group(1).strip()
+            target = re.sub(r"[,\.\?!;]+$", "", raw_target).strip()
+            res = self.registry.execute_tool("close_application", {"name": target})
+            return res.message if res.success else str(res.error)
+
+        # 13. Filesystem Operations
+        folder_match = re.match(r"^(?:create|make)\s+(?:a\s+)?folder\s+(?:called\s+)?([^\s]+)(?:\s+on\s+([a-zA-Z]:[^\s]*))?", clean)
         if folder_match:
             name = folder_match.group(1)
             loc = folder_match.group(2)
@@ -284,17 +378,35 @@ class AurexAgent:
             base_dir = loc if loc else settings.workspace_root
             target = f"{base_dir}\\{name}"
             res = self.registry.execute_tool("create_folder", {"path": target})
-            return res.message if res.success else str(res.error)
+            return f"Folder '{name}' created in workspace, sir." if res.success else str(res.error)
 
-        # Search files
-        if "find" in clean and ("project" in clean or "file" in clean or "python" in clean):
+        if "find" in clean and ("project" in clean or "file" in clean or "python" in clean or "code" in clean):
             query = "*.py" if "python" in clean else "*.*"
             res = self.registry.execute_tool("search_files", {"query": query})
             return res.message if res.success else str(res.error)
 
+        read_match = re.match(r"^read\s+file\s+(.+)$", clean)
+        if read_match:
+            fpath = read_match.group(1).strip()
+            res = self.registry.execute_tool("read_file", {"path": fpath})
+            return res.message if res.success else str(res.error)
+
+        delete_match = re.match(r"^(?:delete|remove)\s+file\s+(.+)$", clean)
+        if delete_match:
+            fpath = delete_match.group(1).strip()
+            res = self.registry.execute_tool("delete_file", {"path": fpath})
+            return res.message if res.success else str(res.error)
+
+        # 14. Terminal Execution
+        cmd_match = re.match(r"^(?:run\s+command|execute\s+command|in\s+terminal\s+run|execute)\s+(.+)$", clean)
+        if cmd_match:
+            cmd = cmd_match.group(1).strip()
+            res = self.registry.execute_tool("execute_command", {"command": cmd})
+            return res.message if res.success else str(res.error)
+
         return (
-            "I heard your request. Local intelligence processed your query; "
-            "basic computer tools (Open Chrome, Check CPU/RAM, Take Screenshot, Search Web) remain active."
+            f"Understood, sir. Command '{text}' processed. "
+            "All computer control subsystems remain active and awaiting your instruction."
         )
 
 

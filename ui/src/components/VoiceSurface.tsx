@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 type AssistantState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
+const isQtWebEngine = typeof navigator !== 'undefined' && /QtWebEngine/i.test(navigator.userAgent);
+
 export const VoiceSurface: React.FC = () => {
   const [state, setState] = useState<AssistantState>('IDLE');
   const [statusText, setStatusText] = useState<string>('Standing by');
@@ -88,7 +90,6 @@ export const VoiceSurface: React.FC = () => {
       };
       mediaRecorderRef.current = mr;
 
-      const isQtWebEngine = typeof navigator !== 'undefined' && /QtWebEngine/i.test(navigator.userAgent);
       const SpeechRec = !isQtWebEngine && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
 
       if (SpeechRec) {
@@ -217,14 +218,18 @@ export const VoiceSurface: React.FC = () => {
   }, []);
 
   // Dispatch Recorded Audio Blob to Groq Whisper & Agent
+  // Dispatch Recorded Audio Blob to Groq Whisper & Agent
   const sendAudioToAgent = async (blob: Blob) => {
     setState('THINKING');
-    setStatusText('Executing...');
+    setStatusText('Processing...');
 
     try {
       const res = await fetch(`${getApiBase()}/api/voice`, {
         method: 'POST',
-        headers: { 'Content-Type': blob.type || 'audio/webm' },
+        headers: {
+          'Content-Type': blob.type || 'audio/webm',
+          ...(isQtWebEngine ? { 'X-Client': 'desktop-widget' } : {})
+        },
         body: blob
       });
 
@@ -255,13 +260,20 @@ export const VoiceSurface: React.FC = () => {
 
     setUserQuery(clean);
     setState('THINKING');
-    setStatusText('Executing...');
+    setStatusText('Processing...');
 
     try {
       const res = await fetch(`${getApiBase()}/api/command`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: clean })
+        headers: {
+          'Content-Type': 'application/json',
+          ...(isQtWebEngine ? { 'X-Client': 'desktop-widget' } : {})
+        },
+        body: JSON.stringify({
+          command: clean,
+          client: isQtWebEngine ? 'desktop-widget' : 'web',
+          speak: isQtWebEngine
+        })
       });
 
       if (!res.ok) throw new Error(`Status: ${res.status}`);
@@ -280,6 +292,19 @@ export const VoiceSurface: React.FC = () => {
 
   // Speak Response & Return to IDLE
   const speakResponse = (text: string) => {
+    if (isQtWebEngine) {
+      // In Desktop Widget, backend TTS speaks through system speakers
+      setState('SPEAKING');
+      setStatusText('Speaking...');
+      const words = text.split(/\s+/).length;
+      const durationMs = Math.max(1600, Math.min(9000, words * 350));
+      setTimeout(() => {
+        setState('IDLE');
+        setStatusText('Standing by');
+      }, durationMs);
+      return;
+    }
+
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
