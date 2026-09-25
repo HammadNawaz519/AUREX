@@ -90,6 +90,8 @@ class MicrophoneRecorder:
                     mono = indata.mean(axis=1).astype(np.int16)
                 else:
                     mono = indata.flatten()
+                if len(mono) > 0:
+                    self._latest_rms = float(np.sqrt(np.mean(mono.astype(np.float32) ** 2))) / 32768.0
                 self._chunks.append(mono.copy())
 
             sr = self._device_samplerate
@@ -113,6 +115,10 @@ class MicrophoneRecorder:
                 logger.error(f"[VOICE] Failed to start microphone: {e}")
                 self._is_recording = False
                 return False
+
+    def get_recent_rms(self) -> float:
+        """Get the most recent normalized RMS level (0.0 to 1.0)."""
+        return getattr(self, "_latest_rms", 0.0)
 
     def get_audio_so_far(self) -> bytes:
         """Get copy of audio recorded so far as 16kHz WAV without stopping the stream."""

@@ -336,7 +336,8 @@ def launch_widget(port: int = 8765):
     widget.show()
     widget.come_up()
 
-    logger.info("AUREX Push-To-Talk Voice System active on desktop.")
+    app.aboutToQuit.connect(ctrl.shutdown)
+    logger.info("AUREX Voice System (Push-to-Talk + Double-Clap) active on desktop.")
     sys.exit(app.exec())
 
 

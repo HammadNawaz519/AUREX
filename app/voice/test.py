@@ -12,6 +12,7 @@ import wave
 
 from app.voice.microphone import MicrophoneRecorder
 from app.voice.speech import SpeechToText, clean_wake_phrase
+from app.voice.clap_detector import DoubleClapDetector
 from app.voice.tts import TTSEngine, sanitize_speech_text
 from app.voice.controller import VoiceController
 
@@ -132,9 +133,38 @@ def test_5_controller_flow():
     return True
 
 
+def test_6_double_clap_detector():
+    print("\n[TEST 6] Testing DoubleClapDetector simulation...")
+    triggered = []
+    detector = DoubleClapDetector(on_double_clap=lambda: triggered.append(True), threshold=0.1)
+    
+    # Simulate Clap 1 (sharp transient)
+    block1 = np.zeros(int(16000 * 0.03), dtype=np.float32)
+    block1[50:60] = 0.5  # sharp peak
+    detector._process_block(block1)
+    assert detector._last_clap_time > 0, "Clap 1 should be registered"
+    
+    # Silence between claps
+    silence = np.zeros(int(16000 * 0.03), dtype=np.float32)
+    detector._process_block(silence)
+    
+    # Wait 0.3s (within 0.15s - 0.85s gap)
+    time.sleep(0.3)
+    
+    # Simulate Clap 2
+    block2 = np.zeros(int(16000 * 0.03), dtype=np.float32)
+    block2[50:60] = 0.5
+    detector._process_block(block2)
+    
+    time.sleep(0.1)
+    assert len(triggered) == 1, "Double clap should trigger callback"
+    print("  [PASS] Test 6: DoubleClapDetector verified.")
+    return True
+
+
 def main():
     print("=" * 60)
-    print("   AUREX PUSH-TO-TALK VOICE SYSTEM VERIFICATION")
+    print("   AUREX VOICE SYSTEM (PTT + DOUBLE-CLAP) VERIFICATION")
     print("=" * 60)
     
     tests = [
@@ -143,6 +173,7 @@ def main():
         test_3_speech_sanitizer,
         test_4_tts_and_interrupt,
         test_5_controller_flow,
+        test_6_double_clap_detector,
     ]
     
     for t in tests:
@@ -153,7 +184,7 @@ def main():
             sys.exit(1)
 
     print("\n" + "=" * 60)
-    print(">>> ALL PUSH-TO-TALK DIAGNOSTIC TESTS PASSED! <<<")
+    print(">>> ALL VOICE DIAGNOSTIC TESTS PASSED! <<<")
     print("=" * 60)
 
 

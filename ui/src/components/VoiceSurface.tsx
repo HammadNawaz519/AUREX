@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
-type AState = 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
+type AState = 'IDLE' | 'LISTENING' | 'TRANSCRIBING' | 'THINKING' | 'WORKING' | 'SPEAKING';
 
 const isQt = typeof navigator !== 'undefined' && /QtWebEngine/i.test(navigator.userAgent);
 const API  = () =>
@@ -43,10 +43,12 @@ const PremiumFluidWave: React.FC<WaveProps> = ({ state, analyser }) => {
     let running = true;
     // Luxurious, slow, unhurried harmonic speeds
     const speeds: Record<AState, number> = {
-      IDLE:      0.016, // Gentle, breathing slow drift
-      LISTENING: 0.042, // Responsive, organic rhythm
-      THINKING:  0.038, // Thoughtful resonance
-      SPEAKING:  0.065, // Vibrant, fluid speech undulation
+      IDLE:         0.016, // Gentle, breathing slow drift
+      LISTENING:    0.042, // Responsive, organic rhythm
+      TRANSCRIBING: 0.048, // Swift conversion ripple
+      THINKING:     0.038, // Thoughtful resonance
+      WORKING:      0.052, // Active computer use harmonics
+      SPEAKING:     0.065, // Vibrant, fluid speech undulation
     };
 
     const draw = () => {
@@ -269,7 +271,15 @@ export const VoiceSurface: React.FC = () => {
     (window as any).__aurexExpand = () => setShrunken(false);
     (window as any).__aurexExecute = executeCmd;
     (window as any).__aurexSetState = (s: AState, txt?: string) => {
-      setS(s, txt || (s === 'LISTENING' ? 'Listening...' : s === 'THINKING' ? 'Thinking...' : s === 'SPEAKING' ? 'Speaking...' : 'Space to speak'));
+      const defaultTxt: Record<AState, string> = {
+        IDLE:         'Space to speak',
+        LISTENING:    'Listening...',
+        TRANSCRIBING: 'Transcribing...',
+        THINKING:     'Thinking...',
+        WORKING:      'Working...',
+        SPEAKING:     'Speaking...',
+      };
+      setS(s, txt || defaultTxt[s] || 'Space to speak');
     };
     (window as any).__aurexSetUserMessage = (q: string) => {
       setQuery(q);
@@ -290,7 +300,7 @@ export const VoiceSurface: React.FC = () => {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !e.repeat && (e.target as HTMLElement)?.tagName !== 'INPUT') {
+      if (e.code === 'Space' && !e.repeat && (e.target as HTMLElement)?.tagName !== 'INPUT' && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') {
         e.preventDefault();
         setS('LISTENING', 'Listening...');
         if (!isQt) {
@@ -303,9 +313,9 @@ export const VoiceSurface: React.FC = () => {
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && (e.target as HTMLElement)?.tagName !== 'INPUT') {
+      if (e.code === 'Space' && (e.target as HTMLElement)?.tagName !== 'INPUT' && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') {
         e.preventDefault();
-        setS('THINKING', 'Processing...');
+        setS('TRANSCRIBING', 'Transcribing...');
         if (!isQt) {
           fetch(`${API()}/api/ptt`, {
             method: 'POST',
@@ -325,12 +335,14 @@ export const VoiceSurface: React.FC = () => {
   }, [executeCmd, setS]);
 
   // Dot color theme
-  const dotColor = {
-    IDLE:      '#94a3b8',
-    LISTENING: '#8b5cf6',
-    THINKING:  '#7c3aed',
-    SPEAKING:  '#06b6d4',
-  }[state];
+  const dotColor = ({
+    IDLE:         '#94a3b8',
+    LISTENING:    '#8b5cf6',
+    TRANSCRIBING: '#ec4899',
+    THINKING:     '#7c3aed',
+    WORKING:      '#3b82f6',
+    SPEAKING:     '#06b6d4',
+  } as Record<AState, string>)[state] || '#94a3b8';
 
   // ─── Compact Pill Shrunken Mode (Exact from 5 commits ago) ──────────────────
   if (shrunken) {
