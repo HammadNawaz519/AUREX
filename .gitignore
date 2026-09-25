@@ -1,72 +1,54 @@
-# Environment & Secrets
-.env
-.env*.local
-*.pem
-*.key
+# ── MARK LIII — what never belongs in the repository ──────────────────────────
+# Everything listed here is created by the app on first run. A fresh clone with
+# none of it present boots straight to the setup screen, which is the intended
+# first experience — so nothing here needs to be committed, and some of it must
+# never be.
 
-# Python
+# ── Secrets. Committing any of these publishes them. ──────────────────────────
+# your Gemini API key, plus per-plugin credentials
+config/api_keys.json
+# the dashboard's TLS private key and certificate
+config/certs/
+# a LINKED WhatsApp session — committing it hands somebody your WhatsApp account
+config/whatsapp_web/
+# Google OAuth tokens (Gmail / Calendar plugins)
+**/token*.json
+# Google OAuth client secrets
+**/client_secret*.json
+*credentials*.json
+.env
+.env.*
+
+# ── Personal data the assistant accumulates about you ─────────────────────────
+memory/long_term.json
+memory/*.db
+
+# ── Python build noise ────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+.eggs/
 
-# Virtual Environments
+# ── Virtual environments ──────────────────────────────────────────────────────
 .venv/
 venv/
-ENV/
 env/
+ENV/
 
-# Pytest / Coverage
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-nosetests.xml
-coverage.xml
-*.cover
-
-# Node & Frontend
-node_modules/
-ui/node_modules/
-ui/dist/
-ui/dist-ssr/
-*.local
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.tmp/
-.vite-temp/
-
-# Logs & App Runtime
-*.log
-logs/
-temp/
-screenshots/
-aurex.log
-
-# IDE & Editor
-.vscode/*
-!.vscode/extensions.json
+# ── Editors and operating systems ─────────────────────────────────────────────
+.vscode/
 .idea/
 *.swp
-*.swo
-*~
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# ── Runtime output ────────────────────────────────────────────────────────────
+*.log
+logs/
+downloads/
+screenshots/

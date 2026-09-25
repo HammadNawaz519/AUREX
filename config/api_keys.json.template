@@ -1,0 +1,13 @@
+{
+  "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
+  "os_system": "windows",
+  "assistant_name": "AUREX",
+  "user_name": "Hammad",
+  "voice_name": "Puck",
+  "push_to_talk_enabled": true,
+  "hud_style": "face",
+  "media_resolution": "medium",
+  "thinking_enabled": false,
+  "wake_word_enabled": false,
+  "proactive_audio": true
+}
