@@ -40,17 +40,19 @@ CORE PRINCIPLES:
 # ─── Intent Classification ──────────────────────────────────────────────────────
 
 SCREEN_INTENT_PATTERNS = [
-    r"look at\s+(my\s+)?(screen|this|assignment|page|document|window)",
+    r"look at\s+(my\s+)?(screen|this|assignment|page|document|window|desktop)",
     r"read\s+(this|the|my)\s+(assignment|document|page|screen|file)",
     r"what('s| is)\s+(on|visible|showing|displayed)",
-    r"analyze\s+(my\s+)?(screen|this)",
+    r"see\s+(my\s+)?(screen|display|desktop|window)",
+    r"watch\s+(my\s+)?(screen|display|desktop)",
+    r"analyze\s+(my\s+)?(screen|this|desktop)",
     r"do\s+(everything|all\s+the\s+tasks?|what\s+it\s+says|the\s+assignment)",
     r"complete\s+(this|the|my)\s+(assignment|task|form|setup)",
     r"fill\s+(this|the|in)\s+form",
     r"click\s+(the|on)",
     r"scroll\s+(down|up|to)",
     r"type\s+(in|into)",
-    r"find\s+(the|a)\s+(button|link|field|input)",
+    r"find\s+(the|a)\s+(button|link|field|input|icon|app)",
 ]
 
 PLAN_INTENT_PATTERNS = [
@@ -152,6 +154,25 @@ class AurexAgent:
             self.disable_screen_awareness()
             self._screen_awareness_auto_off = True
             return "I have stopped watching your screen, Hammad."
+
+        # Desktop items inspect
+        if any(p in lower for p in [
+            "see my desktop", "look at my desktop", "what's on my desktop",
+            "what is on my desktop", "check my desktop", "what is on the desktop",
+            "view desktop", "desktop items", "apps on desktop", "what is on desktop"
+        ]):
+            from app.tools.applications import get_desktop_items
+            items = get_desktop_items()
+            if items:
+                app_names = [it["name"] for it in items if not it["name"].startswith(".")]
+                app_list = ", ".join(app_names[:8])
+                ans = f"On your desktop, you have: {app_list}. Which one would you like me to open, Hammad?"
+            else:
+                ans = "Your desktop is clear with no shortcut icons, Hammad."
+            self.context.add_turn(clean_text, ans)
+            self.memory.add_history("user", clean_text)
+            self.memory.add_history("assistant", ans)
+            return ans
 
         # Correction check
         is_corr, corr_msg = self.correction_learner.inspect_for_correction(clean_text)
@@ -586,11 +607,17 @@ class AurexAgent:
         # App launch
         open_match = re.match(r"^(?:open|launch|start|run)\s+(.+)$", clean)
         if open_match:
-            target = re.sub(r"[,\.?!;]+$", "", open_match.group(1).strip())
+            raw_target = re.sub(r"[,\.?!;]+$", "", open_match.group(1).strip())
+            target = raw_target
+            desktop_m = re.match(r"^(.+?)\s+(?:on|from)\s+(?:the\s+|my\s+)?desktop$", raw_target)
+            if desktop_m:
+                extracted = desktop_m.group(1).strip()
+                if extracted not in ("this app", "the app", "this", "app"):
+                    target = extracted
             res = self.registry.execute_tool("open_application", {"name": target})
             if res.success:
                 self.pattern_detector.record_and_analyze(action_type="open_application", application=target)
-                return f"Right away, sir. Opening {target}."
+                return f"Right away, Hammad. Opening {target}."
             return str(res.error)
 
         # App close

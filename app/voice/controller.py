@@ -66,7 +66,7 @@ class VoiceController:
 
     def _on_tts_finished(self):
         if self._state == "SPEAKING":
-            self._set_state("IDLE", "Press Space to speak")
+            self._set_state("IDLE", "Space to speak")
 
     def set_ui_action_handler(self, handler: Callable[[str], None]):
         self.ui_action_handler = handler
@@ -74,59 +74,34 @@ class VoiceController:
     # ─── Push-to-Talk Triggers ────────────────────────────────────────────────
 
     def start_recording(self):
-        """User pressed Space bar or clicked microphone: start recording."""
-        # 1. Interrupt any active speech immediately
+        """User pressed Space bar: immediately cut off any active speech and start recording."""
+        # 1. Cut off active speech immediately
         if self.tts.is_speaking:
             logger.info("[VOICE] Active speech interrupted by user voice input.")
             self.tts.stop()
 
-        # 2. Reset partial and emit listening prompt to UI
-        self._last_partial = ""
-        self._emit("user_transcript", "Listening...")
+        # 2. Reset UI transcript and status
+        self._emit("user_transcript", "")
+        self._emit("assistant_response", "")
 
         # 3. Start microphone capture
         success = self.mic.start()
         if success:
             self._set_state("LISTENING", "Listening...")
-            self._stream_thread = threading.Thread(
-                target=self._live_stream_worker,
-                daemon=True,
-                name="AurexLiveSTT"
-            )
-            self._stream_thread.start()
         else:
             self._set_state("ERROR", "Microphone unavailable")
 
-    def _live_stream_worker(self):
-        """Periodically transcribe in-flight audio so words appear live in UI while speaking."""
-        import time
-        time.sleep(0.8)
-        while self.mic.is_recording:
-            try:
-                audio_bytes = self.mic.get_audio_so_far()
-                if audio_bytes and len(audio_bytes) > 20000:
-                    text = self.speech.transcribe(audio_bytes)
-                    if text and self.mic.is_recording:
-                        _, clean = clean_wake_phrase(text)
-                        clean = clean.strip()
-                        if clean and clean != getattr(self, "_last_partial", ""):
-                            self._last_partial = clean
-                            self._emit("user_transcript", clean)
-            except Exception as e:
-                logger.debug(f"[VOICE] Live partial STT: {e}")
-            time.sleep(0.8)
-
     def stop_recording(self):
-        """User released Space bar: transcribe and execute."""
+        """User released Space bar: stop mic, transcribe, display transcript immediately, and execute."""
         if not self.mic.is_recording:
             return
 
-        self._set_state("TRANSCRIBING", "Transcribing...")
+        self._set_state("THINKING", "Processing...")
         audio_bytes = self.mic.stop()
 
-        if not audio_bytes or len(audio_bytes) < 400:
-            logger.debug("[VOICE] Recording too short, resetting to IDLE.")
-            self._set_state("IDLE", "Press Space to speak")
+        if not audio_bytes or len(audio_bytes) < 200:
+            logger.debug("[VOICE] Recording empty or too short, resetting to IDLE.")
+            self._set_state("IDLE", "Space to speak")
             return
 
         # Process asynchronously so GUI thread remains completely responsive
@@ -139,25 +114,25 @@ class VoiceController:
         self._worker_thread.start()
 
     def _process_utterance(self, audio_bytes: bytes):
-        """Background pipeline: STT -> Show Transcript -> Agent -> Show Response -> TTS."""
+        """Pipeline: STT -> Show Transcript Immediately -> Agent -> Show Response -> TTS."""
         try:
             # 1. Transcribe audio via Groq Whisper
             transcript = self.speech.transcribe(audio_bytes)
-            if not transcript and getattr(self, "_last_partial", ""):
-                transcript = self._last_partial
 
-            if not transcript:
-                self._set_state("IDLE", "Press Space to speak")
+            if not transcript or not transcript.strip():
+                logger.debug("[VOICE] No speech transcribed.")
+                self._set_state("IDLE", "Space to speak")
                 return
 
             # Strip any accidental wake phrase prefix
             _, clean = clean_wake_phrase(transcript)
             user_text = (clean if clean else transcript).strip()
             if not user_text:
-                self._set_state("IDLE", "Press Space to speak")
+                self._set_state("IDLE", "Space to speak")
                 return
 
-            # 2. SHOW USER TRANSCRIPT ON UI IMMEDIATELY (before agent runs)
+            # 2. SHOW USER TRANSCRIPT ON UI IMMEDIATELY
+            logger.info(f'[VOICE] User said: "{user_text}"')
             self._emit("user_transcript", user_text)
             self._set_state("THINKING", "Thinking...")
 

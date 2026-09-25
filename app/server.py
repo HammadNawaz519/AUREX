@@ -223,8 +223,11 @@ class AurexAPIHandler(BaseHTTPRequestHandler):
                     agent = get_agent()
                     response_text = agent.process_input(clean_cmd or command_text)
 
-                # Always speak aloud through system speakers
-                get_tts().speak(response_text)
+                client_type = data.get("client", "")
+                should_speak = data.get("speak", True)
+                is_layout_action = any(p in lower_cmd for p in ["shrink", "expand", "pill", "box"])
+                if should_speak and client_type != "desktop-widget" and not is_layout_action:
+                    get_tts().speak(response_text)
 
                 self._set_cors_headers(200)
                 self.wfile.write(json.dumps({

@@ -54,37 +54,115 @@ COMMON_APP_PATHS = {
 }
 
 
+def get_desktop_items() -> List[Dict[str, str]]:
+    """Return all applications, shortcuts, and items present on the user's desktop."""
+    desktop_dirs = [
+        os.path.expanduser("~/Desktop"),
+        os.path.expanduser("~/OneDrive/Desktop"),
+        r"C:\Users\Public\Desktop",
+    ]
+    items = []
+    seen = set()
+    for d in desktop_dirs:
+        if os.path.exists(d):
+            for f in os.listdir(d):
+                if f.lower() == "desktop.ini":
+                    continue
+                path = os.path.join(d, f)
+                stem = Path(f).stem
+                if stem.lower() not in seen:
+                    seen.add(stem.lower())
+                    items.append({"name": stem, "filename": f, "path": path})
+    return items
+
+
 class ApplicationIndexer:
-    """Scans and caches installed Windows applications."""
+    """Scans and caches installed Windows applications from Desktop, Start Menu, Registry, and PATH."""
     _cache: Dict[str, str] = {}
+
+    @classmethod
+    def _scan_all(cls) -> Dict[str, str]:
+        index: Dict[str, str] = {}
+        # 1. Desktop shortcuts
+        desktop_dirs = [
+            os.path.expanduser("~/Desktop"),
+            os.path.expanduser("~/OneDrive/Desktop"),
+            r"C:\Users\Public\Desktop",
+        ]
+        # 2. Start Menu shortcuts
+        start_dirs = [
+            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
+            os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
+        ]
+
+        for d in desktop_dirs + start_dirs:
+            if os.path.exists(d):
+                for root, _, files in os.walk(d):
+                    for f in files:
+                        if f.lower().endswith((".lnk", ".url", ".exe", ".bat", ".cmd")):
+                            stem = Path(f).stem.lower().strip()
+                            if stem not in index:
+                                index[stem] = os.path.join(root, f)
+        return index
 
     @classmethod
     def find_app_path(cls, app_name: str) -> Optional[str]:
         clean_name = app_name.lower().strip()
-        # Direct common mapping
+
+        # Remove filler words
+        clean_name = re.sub(r"^(?:the\s+|an\s+|a\s+)", "", clean_name).strip()
+        clean_name = re.sub(r"\s+(?:on|from)\s+(?:the\s+|my\s+)?desktop$", "", clean_name).strip()
+        clean_name = re.sub(r"\s+app(?:lication)?$", "", clean_name).strip()
+
+        # 1. Direct common mapping
         for key, paths in COMMON_APP_PATHS.items():
-            if clean_name == key or key in clean_name:
+            if clean_name == key or key in clean_name or clean_name in key:
                 for p in paths:
                     exp = os.path.expandvars(p)
                     if os.path.exists(exp) or not os.path.isabs(exp):
                         return exp
 
-        # Check PATH environment variable
+        # 2. Check Desktop and Start Menu dynamic index
+        scanned = cls._scan_all()
+        # Exact match
+        if clean_name in scanned:
+            return scanned[clean_name]
+
+        # Substring match (e.g. "docker" matches "docker desktop", "packet tracer" matches "cisco packet tracer")
+        for k, p in scanned.items():
+            if clean_name == k or clean_name in k or k in clean_name:
+                return p
+
+        # 3. Check PATH environment variable
         for p in os.environ.get("PATH", "").split(os.pathsep):
             candidate = os.path.join(p, clean_name if clean_name.endswith(".exe") else f"{clean_name}.exe")
             if os.path.exists(candidate):
                 return candidate
+
+        # 4. Check Windows Registry App Paths
+        try:
+            import winreg
+            for root_key in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(root_key, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{clean_name}.exe") as k:
+                        val, _ = winreg.QueryValueEx(k, "")
+                        if val and os.path.exists(val):
+                            return val
+                except OSError:
+                    pass
+        except Exception:
+            pass
 
         return None
 
 
 class OpenApplicationTool(BaseTool):
     name = "open_application"
-    description = "Launch an installed Windows desktop application (e.g. Chrome, Edge, VS Code, Notepad, Spotify, Word)."
+    description = "Launch an installed Windows desktop application (e.g. Chrome, Edge, VS Code, Notepad, Spotify, Docker, Packet Tracer)."
     parameters = {
         "type": "object",
         "properties": {
-            "name": {"type": "string", "description": "Name of the application, e.g. Chrome, Edge, VS Code, Notepad, Spotify, Calculator"},
+            "name": {"type": "string", "description": "Name of the application, e.g. Chrome, Edge, VS Code, Notepad, Spotify, Docker, Packet Tracer"},
             "arguments": {"type": "string", "description": "Optional command-line arguments to pass"}
         },
         "required": ["name"]
@@ -131,14 +209,28 @@ class OpenApplicationTool(BaseTool):
             except Exception as e:
                 return ToolResult(success=False, error=str(e))
 
+        # Check if generic desktop request without explicit app name
+        if lower_clean in ("this app on the desktop", "the app on the desktop", "this app", "the app"):
+            desktop_items = get_desktop_items()
+            if desktop_items:
+                # Launch first desktop application shortcut
+                for it in desktop_items:
+                    if it["filename"].lower().endswith((".lnk", ".exe")):
+                        try:
+                            os.startfile(it["path"])
+                            return ToolResult(success=True, message=f"Opening {it['name']} from your desktop.")
+                        except Exception as e:
+                            return ToolResult(success=False, error=str(e))
+                return ToolResult(success=False, error="No launchable desktop applications found.")
+            return ToolResult(success=False, error="Your desktop has no application shortcuts.")
+
         app_path = ApplicationIndexer.find_app_path(clean)
         if app_path:
-            if app_path.startswith("ms-settings:"):
-                try:
-                    os.startfile(app_path)
-                    return ToolResult(success=True, message=f"Opening {name}.")
-                except Exception as e:
-                    return ToolResult(success=False, error=str(e))
+            try:
+                os.startfile(app_path)
+                return ToolResult(success=True, message=f"Opening {name}.")
+            except Exception as e:
+                logger.debug(f"startfile failed for {app_path}: {e}")
 
             cmd = [app_path]
             if arguments:
@@ -150,25 +242,17 @@ class OpenApplicationTool(BaseTool):
                     shell=False
                 )
                 return ToolResult(success=True, message=f"Opening {name}.")
-            except Exception:
-                pass
+            except Exception as e:
+                return ToolResult(success=False, error=f"Failed to launch {name}: {e}")
 
-        # Try os.startfile directly (relies on Windows registered applications and extensions)
+        # Try os.startfile directly (relies on Windows registered applications)
         try:
             os.startfile(clean)
             return ToolResult(success=True, message=f"Opening {name}.")
         except Exception:
             pass
 
-        # Universal shell launcher fallback
-        try:
-            subprocess.Popen(
-                ["powershell", "-NoProfile", "-Command", f"Start-Process '{clean}'"],
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            )
-            return ToolResult(success=True, message=f"Opening {name}.")
-        except Exception as e:
-            return ToolResult(success=False, error=f"Could not open application '{name}': {e}")
+        return ToolResult(success=False, error=f"Could not find application '{name}' on your desktop or system.")
 
 
 class CloseApplicationTool(BaseTool):

@@ -213,15 +213,16 @@ class TTSEngine:
                 pass
 
         success = False
+        playback_started = False
 
-        # Attempt 1: EdgeTTS (High-fidelity neural voice)
+        # Attempt 1: EdgeTTS (High-fidelity British Ryan neural voice)
         try:
-            success = asyncio.run(self._edge_tts_speak(text))
+            success, playback_started = asyncio.run(self._edge_tts_speak(text))
         except Exception as e:
             logger.debug(f"[TTS] Edge-TTS error: {e}")
 
-        # Attempt 2: Windows SAPI (Instant offline fallback)
-        if not success and not self._interrupted:
+        # Attempt 2: Windows SAPI (Instant offline fallback, ONLY if playback never began)
+        if not success and not playback_started and not self._interrupted:
             try:
                 self._sapi_speak(text)
                 success = True
@@ -242,9 +243,10 @@ class TTSEngine:
             except Exception:
                 pass
 
-    async def _edge_tts_speak(self, text: str) -> bool:
+    async def _edge_tts_speak(self, text: str) -> tuple[bool, bool]:
+        """Synthesize and play audio via EdgeTTS. Returns (success, playback_started)."""
         if self._interrupted:
-            return False
+            return False, False
 
         import edge_tts
 
@@ -254,6 +256,7 @@ class TTSEngine:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
             temp_path = tf.name
 
+        playback_started = False
         try:
             communicate = edge_tts.Communicate(
                 text,
@@ -265,39 +268,46 @@ class TTSEngine:
             await asyncio.wait_for(communicate.save(temp_path), timeout=8.0)
 
             if self._interrupted:
-                return False
+                return False, False
 
             data, fs = sf.read(temp_path)
+            sd.stop()
             sd.play(data, fs)
+            playback_started = True
 
-            # Polling wait with fast interruption check (every 50ms)
+            # Polling wait with fast interruption check (every 40ms)
             while sd.get_stream() and sd.get_stream().active:
                 if self._interrupted:
                     sd.stop()
-                    return False
-                time.sleep(0.05)
+                    return False, True
+                time.sleep(0.04)
 
-            return True
+            return True, True
 
         except Exception as e:
             logger.debug(f"[TTS] Edge-TTS primary attempt failed: {e}")
             if self._interrupted:
-                return False
+                return False, playback_started
+            if playback_started:
+                # Sound already started playing; do not attempt fallback to avoid two voices!
+                return False, True
             try:
                 communicate = edge_tts.Communicate(text, FALLBACK_VOICE, rate=SPEECH_RATE)
                 await asyncio.wait_for(communicate.save(temp_path), timeout=6.0)
                 if self._interrupted:
-                    return False
+                    return False, False
                 data, fs = sf.read(temp_path)
+                sd.stop()
                 sd.play(data, fs)
+                playback_started = True
                 while sd.get_stream() and sd.get_stream().active:
                     if self._interrupted:
                         sd.stop()
-                        return False
-                    time.sleep(0.05)
-                return True
+                        return False, True
+                    time.sleep(0.04)
+                return True, True
             except Exception:
-                return False
+                return False, playback_started
         finally:
             try:
                 if os.path.exists(temp_path):

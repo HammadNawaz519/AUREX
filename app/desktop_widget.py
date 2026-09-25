@@ -32,9 +32,9 @@ from app.voice.controller import VoiceController, get_voice_controller
 logger = logging.getLogger("AurexDesktopWidget")
 
 CARD_W   = 384
-CARD_H   = 195
-SHRINK_W = 180
-SHRINK_H = 54
+CARD_H   = 180
+SHRINK_W = 184
+SHRINK_H = 56
 
 
 class BridgeDispatcher(QObject):
@@ -60,7 +60,7 @@ class GlobalKeyFilter(QObject):
             if isinstance(focused, (QLineEdit, QTextEdit, QPlainTextEdit)):
                 return False
 
-            if self.widget.controller:
+            if self.widget.controller and not self.is_space_down:
                 self.is_space_down = True
                 self.widget.controller.start_recording()
                 return True
@@ -125,31 +125,15 @@ class FramelessDesktopWidget(QWebEngineView):
         screen = QApplication.primaryScreen().availableGeometry()
         x = screen.x() + screen.width() - CARD_W - 20
         y = screen.y() + 20
-        self.setMinimumSize(0, 0)
-        self.setMaximumSize(16777215, 16777215)
         self.setFixedSize(CARD_W, CARD_H)
         self.move(x, y)
-        try:
-            import ctypes
-            hwnd = int(self.winId())
-            ctypes.windll.user32.SetWindowPos(hwnd, 0, x, y, CARD_W, CARD_H, 0x0004 | 0x0040)
-        except Exception as e:
-            logger.debug(f"Win32 SetWindowPos error: {e}")
 
     def _position_shrink(self):
         screen = QApplication.primaryScreen().availableGeometry()
         x = screen.x() + screen.width() - SHRINK_W - 20
         y = screen.y() + 20
-        self.setMinimumSize(0, 0)
-        self.setMaximumSize(16777215, 16777215)
         self.setFixedSize(SHRINK_W, SHRINK_H)
         self.move(x, y)
-        try:
-            import ctypes
-            hwnd = int(self.winId())
-            ctypes.windll.user32.SetWindowPos(hwnd, 0, x, y, SHRINK_W, SHRINK_H, 0x0004 | 0x0040)
-        except Exception as e:
-            logger.debug(f"Win32 SetWindowPos error: {e}")
 
     def come_up(self):
         """Bring widget above ALL applications (Chrome, VS Code, full-screen tabs)."""
@@ -277,10 +261,26 @@ class FramelessDesktopWidget(QWebEngineView):
         super().mouseReleaseEvent(event)
 
 
-def _kill_previous_instances():
-    """Ensure no duplicate AUREX desktop widgets are lingering."""
+def _kill_previous_instances(port: int = 8765):
+    """Ensure no duplicate AUREX desktop widgets or port holders are lingering."""
     import os
     current_pid = os.getpid()
+
+    # 1. Free target port if occupied by previous run
+    try:
+        import psutil
+        for conn in psutil.net_connections(kind='inet'):
+            if conn.laddr and conn.laddr.port == port and conn.pid and conn.pid != current_pid:
+                try:
+                    p = psutil.Process(conn.pid)
+                    logger.info(f"Terminating lingering port {port} holder (PID {conn.pid})")
+                    p.kill()
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"Port connection check: {e}")
+
+    # 2. Terminate any previous python process running desktop_widget
     try:
         import psutil
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
@@ -301,7 +301,7 @@ def launch_widget(port: int = 8765):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     # Clean up any zombie instances first
-    _kill_previous_instances()
+    _kill_previous_instances(port=port)
 
     server_thread = threading.Thread(
         target=run_server,

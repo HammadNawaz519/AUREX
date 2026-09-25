@@ -165,16 +165,28 @@ const PremiumFluidWave: React.FC<WaveProps> = ({ state, analyser }) => {
   }, []);
 
   useEffect(() => {
-    const handleResize = () => {
-      const c = canvasRef.current;
-      if (c) {
-        c.width = c.parentElement?.clientWidth ?? 316;
-        c.height = c.parentElement?.clientHeight ?? 58;
+    const canvas = canvasRef.current;
+    if (!canvas || !canvas.parentElement) return;
+
+    const updateSize = () => {
+      if (canvas && canvas.parentElement) {
+        const pw = canvas.parentElement.clientWidth;
+        const ph = canvas.parentElement.clientHeight;
+        if (pw > 0 && ph > 0) {
+          canvas.width = pw;
+          canvas.height = ph;
+        }
       }
     };
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(canvas.parentElement);
+    window.addEventListener('resize', updateSize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', updateSize);
+    };
   }, []);
 
   return <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />;
@@ -183,7 +195,7 @@ const PremiumFluidWave: React.FC<WaveProps> = ({ state, analyser }) => {
 // ─── Main Component ──────────────────────────────────────────────────────────────
 export const VoiceSurface: React.FC = () => {
   const [state, setState] = useState<AState>('IDLE');
-  const [status, setStatus] = useState('Ready');
+  const [status, setStatus] = useState('Space to speak');
   const [query, setQuery] = useState('');
   const [reply, setReply] = useState('');
   const [shrunken, setShrunken] = useState(false);
@@ -201,7 +213,7 @@ export const VoiceSurface: React.FC = () => {
   // ─── Execute Command ─────────────────────────────────────────────────────────
   const executeCmd = useCallback(async (cmd: string) => {
     const clean = cmd.trim();
-    if (!clean) { setS('IDLE', 'Ready'); return; }
+    if (!clean) { setS('IDLE', 'Space to speak'); return; }
     setQuery(clean);
     setS('THINKING', 'Thinking...');
     try {
@@ -211,7 +223,7 @@ export const VoiceSurface: React.FC = () => {
           'Content-Type': 'application/json',
           ...(isQt ? { 'X-Client': 'desktop-widget' } : {}),
         },
-        body: JSON.stringify({ command: clean, client: isQt ? 'desktop-widget' : 'web', speak: true }),
+        body: JSON.stringify({ command: clean, client: isQt ? 'desktop-widget' : 'web', speak: false }),
       });
       const data = await res.json();
       const r = (data.response || 'Done.').trim();
@@ -219,16 +231,26 @@ export const VoiceSurface: React.FC = () => {
       setS('SPEAKING', 'Speaking...');
       const wordCount = r.split(/\s+/).length;
       setTimeout(() => {
-        setS('IDLE', 'Ready');
+        setS('IDLE', 'Space to speak');
         setQuery('');
       }, Math.max(1800, wordCount * 350));
     } catch {
       setReply('Connection error.');
-      setS('IDLE', 'Ready');
+      setS('IDLE', 'Space to speak');
     }
   }, [setS]);
 
-  // ─── Expand Action ──────────────────────────────────────────────────────────
+  // ─── Shrink / Expand Actions ────────────────────────────────────────────────
+  const triggerShrink = useCallback(async () => {
+    setShrunken(true);
+    try {
+      await fetch(`${API()}/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'shrink', client: isQt ? 'desktop-widget' : 'web', speak: false }),
+      });
+    } catch (_) {}
+  }, []);
 
   const triggerExpand = useCallback(async () => {
     setShrunken(false);
@@ -236,7 +258,7 @@ export const VoiceSurface: React.FC = () => {
       await fetch(`${API()}/api/command`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: 'expand', client: 'desktop-widget' }),
+        body: JSON.stringify({ command: 'expand', client: isQt ? 'desktop-widget' : 'web', speak: false }),
       });
     } catch (_) {}
   }, []);
@@ -247,7 +269,7 @@ export const VoiceSurface: React.FC = () => {
     (window as any).__aurexExpand = () => setShrunken(false);
     (window as any).__aurexExecute = executeCmd;
     (window as any).__aurexSetState = (s: AState, txt?: string) => {
-      setS(s, txt || (s === 'LISTENING' ? 'Listening...' : s === 'THINKING' ? 'Thinking...' : s === 'SPEAKING' ? 'Speaking...' : 'Ready'));
+      setS(s, txt || (s === 'LISTENING' ? 'Listening...' : s === 'THINKING' ? 'Thinking...' : s === 'SPEAKING' ? 'Speaking...' : 'Space to speak'));
     };
     (window as any).__aurexSetUserMessage = (q: string) => {
       setQuery(q);
@@ -260,28 +282,37 @@ export const VoiceSurface: React.FC = () => {
       setQuery(q);
       setReply(r);
       setS('SPEAKING', 'Speaking...');
+      const wordCount = (r || '').split(/\s+/).length;
+      setTimeout(() => {
+        setS('IDLE', 'Space to speak');
+        setQuery('');
+      }, Math.max(1800, wordCount * 350));
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat && (e.target as HTMLElement)?.tagName !== 'INPUT') {
         e.preventDefault();
         setS('LISTENING', 'Listening...');
-        fetch(`${API()}/api/ptt`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'start' }),
-        }).catch(() => {});
+        if (!isQt) {
+          fetch(`${API()}/api/ptt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'start' }),
+          }).catch(() => {});
+        }
       }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space' && (e.target as HTMLElement)?.tagName !== 'INPUT') {
         e.preventDefault();
-        setS('THINKING', 'Transcribing...');
-        fetch(`${API()}/api/ptt`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'stop' }),
-        }).catch(() => {});
+        setS('THINKING', 'Processing...');
+        if (!isQt) {
+          fetch(`${API()}/api/ptt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'stop' }),
+          }).catch(() => {});
+        }
       }
     };
 
@@ -291,24 +322,22 @@ export const VoiceSurface: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [setS]);
-
-
+  }, [executeCmd, setS]);
 
   // Dot color theme
   const dotColor = {
     IDLE:      '#94a3b8',
-    LISTENING: '#ef4444', // Active red indicator for recording
-    THINKING:  '#8b5cf6',
+    LISTENING: '#8b5cf6',
+    THINKING:  '#7c3aed',
     SPEAKING:  '#06b6d4',
   }[state];
 
-  // ─── Compact Pill Shrunken Mode ──────────────────────────────────────────────
+  // ─── Compact Pill Shrunken Mode (Exact from 5 commits ago) ──────────────────
   if (shrunken) {
     return (
       <div
         onClick={triggerExpand}
-        title="Click to expand AUREX to box mode"
+        title="Click to expand AUREX"
         style={{
           width: '164px',
           height: '42px',
@@ -328,6 +357,7 @@ export const VoiceSurface: React.FC = () => {
           userSelect: 'none' as const,
           transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
           fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+          boxSizing: 'border-box' as const,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -352,7 +382,7 @@ export const VoiceSurface: React.FC = () => {
     );
   }
 
-  // ─── Full Box Card ─────────────────────────────────────────────────────────
+  // ─── Full Luxury Card (Clean revert with round bottom and shrink button) ──
   return (
     <div
       style={{
@@ -376,7 +406,7 @@ export const VoiceSurface: React.FC = () => {
       }}
     >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
           <span
             style={{
@@ -397,13 +427,33 @@ export const VoiceSurface: React.FC = () => {
             {status}
           </span>
         </div>
+
+        {/* Shrink button */}
+        <button
+          onClick={triggerShrink}
+          title="Shrink to compact badge"
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#94a3b8',
+            fontSize: '11px',
+            cursor: 'pointer',
+            padding: '2px 5px',
+            borderRadius: '6px',
+            transition: 'color 0.2s',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = '#7c3aed')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = '#94a3b8')}
+        >
+          ●
+        </button>
       </div>
 
       {/* Hero: Harmonic Wave */}
       <div
         style={{
           width: '100%',
-          height: '54px',
+          height: '56px',
           background: 'rgba(241, 245, 249, 0.75)',
           borderRadius: '16px',
           padding: '4px 10px',
@@ -419,73 +469,49 @@ export const VoiceSurface: React.FC = () => {
       {/* Transcript & Response Area */}
       <div
         style={{
-          minHeight: '26px',
+          minHeight: '22px',
           display: 'flex',
-          flexDirection: 'column' as const,
-          gap: '3px',
+          alignItems: 'center',
           justifyContent: 'center',
+          textAlign: 'center' as const,
           overflow: 'hidden',
-          padding: '0 2px',
+          padding: '0 4px',
         }}
       >
         {query ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#8b5cf6', flexShrink: 0 }}>You:</span>
-            <span
-              style={{
-                fontSize: '11.5px',
-                fontWeight: 600,
-                color: '#1e293b',
-                whiteSpace: 'nowrap' as const,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {query}
-            </span>
-          </div>
-        ) : state === 'LISTENING' ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#ef4444', flexShrink: 0 }}>You:</span>
-            <span
-              style={{
-                fontSize: '11.5px',
-                fontWeight: 500,
-                color: '#ef4444',
-                fontStyle: 'italic',
-                whiteSpace: 'nowrap' as const,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              Listening... speak now
-            </span>
-          </div>
-        ) : !reply ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-            <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>
-              Hold Space to speak
-            </span>
-          </div>
-        ) : null}
-
-        {reply ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#06b6d4', flexShrink: 0 }}>AUREX:</span>
-            <span
-              style={{
-                fontSize: '11.5px',
-                fontWeight: 500,
-                color: '#334155',
-                whiteSpace: 'nowrap' as const,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {reply}
-            </span>
-          </div>
-        ) : null}
+          <span
+            style={{
+              fontSize: '12px',
+              fontWeight: 600,
+              color: '#7c3aed',
+              fontStyle: 'italic',
+              whiteSpace: 'nowrap' as const,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: '100%',
+            }}
+          >
+            "{query}"
+          </span>
+        ) : reply ? (
+          <span
+            style={{
+              fontSize: '11.5px',
+              fontWeight: 500,
+              color: '#1e293b',
+              whiteSpace: 'nowrap' as const,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: '100%',
+            }}
+          >
+            {reply}
+          </span>
+        ) : (
+          <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 400 }}>
+            {state === 'LISTENING' ? 'Listening...' : 'Space to speak'}
+          </span>
+        )}
       </div>
     </div>
   );

@@ -14,8 +14,20 @@ logger = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 
 
+def ensure_interactive_desktop():
+    """Ensure current thread is attached to the active user desktop station."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hdesk = user32.OpenDesktopW("default", 0, False, 0x01FF)
+        if hdesk:
+            user32.SetThreadDesktop(hdesk)
+    except Exception:
+        pass
+
+
 class ScreenCaptureService:
-    """Fast screen capture using MSS (DXGI-backed) with ImageGrab fallback."""
+    """Fast screen capture using Pillow (all_screens=True), MSS, and Qt with interactive desktop attachment."""
 
     def __init__(self):
         self._mss = None
@@ -40,32 +52,39 @@ class ScreenCaptureService:
         Returns PIL Image in RGB.
         """
         with _LOCK:
-            # 1. Try Qt capture first (highest reliability in desktop widget app)
-            img = self._capture_qt(region)
-            if img is not None:
-                self._last_image = img
-                return img
+            ensure_interactive_desktop()
+
+            # 1. Try Pillow ImageGrab with all_screens=True (most resilient across multi-monitor & Windows 11)
+            try:
+                img = self._capture_pillow(region)
+                if img is not None:
+                    ext = img.getextrema()
+                    # Ensure image is not pure black
+                    if ext != ((0, 0), (0, 0), (0, 0)):
+                        self._last_image = img
+                        return img
+            except Exception as e:
+                logger.debug(f"Pillow capture failed: {e}")
 
             # 2. Try MSS
             if self._mss:
                 try:
                     img = self._capture_mss(region)
                     if img is not None:
-                        self._last_image = img
-                        return img
+                        ext = img.getextrema()
+                        if ext != ((0, 0), (0, 0), (0, 0)):
+                            self._last_image = img
+                            return img
                 except Exception as e:
                     logger.debug(f"MSS capture failed: {e}")
 
-            # 3. Fallback to Pillow ImageGrab
-            try:
-                img = self._capture_pillow(region)
-                if img is not None:
-                    self._last_image = img
-                    return img
-            except Exception as e:
-                logger.debug(f"Pillow ImageGrab failed: {e}")
+            # 3. Fallback to Qt capture
+            img = self._capture_qt(region)
+            if img is not None:
+                self._last_image = img
+                return img
 
-            return None
+            return self._last_image
 
     def _capture_qt(self, region: Optional[Tuple[int,int,int,int]] = None) -> Optional[Image.Image]:
         try:
@@ -100,7 +119,7 @@ class ScreenCaptureService:
             left, top, right, bottom = region
             mon = {"left": left, "top": top, "width": right - left, "height": bottom - top}
         else:
-            mon = sct.monitors[0]  # full virtual desktop
+            mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
 
         sct_img = sct.grab(mon)
         img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
@@ -108,7 +127,10 @@ class ScreenCaptureService:
 
     def _capture_pillow(self, region: Optional[Tuple[int,int,int,int]]) -> Optional[Image.Image]:
         from PIL import ImageGrab
-        img = ImageGrab.grab(bbox=region)
+        if region:
+            img = ImageGrab.grab(bbox=region, all_screens=True)
+        else:
+            img = ImageGrab.grab(all_screens=True)
         return img.convert("RGB")
 
     def capture_window(self, hwnd: int) -> Optional[Image.Image]:
@@ -133,7 +155,6 @@ class ScreenCaptureService:
             save_bmp.CreateCompatibleBitmap(mfc_dc, w, h)
             save_dc.SelectObject(save_bmp)
 
-            # Use PrintWindow for off-screen windows
             result = windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 3)
 
             bmpinfo = save_bmp.GetInfo()
@@ -169,20 +190,40 @@ class ScreenCaptureService:
             return True
 
     def get_active_window_hwnd(self) -> Optional[int]:
-        """Return HWND of the currently focused window."""
+        """Return HWND of the currently focused user window (skipping AUREX floating widget)."""
+        ensure_interactive_desktop()
         try:
             import win32gui
-            return win32gui.GetForegroundWindow()
+            import win32con
+            hwnd = win32gui.GetForegroundWindow()
+            curr = hwnd
+            while curr:
+                if win32gui.IsWindowVisible(curr):
+                    title = win32gui.GetWindowText(curr)
+                    if title and "aurex" not in title.lower():
+                        return curr
+                curr = win32gui.GetWindow(curr, win32con.GW_HWNDNEXT)
+            return hwnd
         except Exception:
             return None
 
     def get_active_window_title(self) -> str:
+        """Return title of currently focused user window (skipping AUREX floating widget)."""
+        ensure_interactive_desktop()
         try:
             import win32gui
+            import win32con
             hwnd = win32gui.GetForegroundWindow()
-            return win32gui.GetWindowText(hwnd)
+            curr = hwnd
+            while curr:
+                if win32gui.IsWindowVisible(curr):
+                    title = win32gui.GetWindowText(curr)
+                    if title and "aurex" not in title.lower():
+                        return title
+                curr = win32gui.GetWindow(curr, win32con.GW_HWNDNEXT)
+            return win32gui.GetWindowText(hwnd) or "Desktop"
         except Exception:
-            return ""
+            return "Desktop"
 
     def get_screen_size(self) -> Tuple[int, int]:
         try:

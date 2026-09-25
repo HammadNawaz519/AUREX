@@ -171,6 +171,12 @@ class MicrophoneRecorder:
 
         logger.info(f"[VOICE] Recording stopped (duration: {duration:.2f}s, output: {sr}Hz, {len(audio_data)} samples)")
 
+        # If audio is shorter than 0.5s, pad with trailing silence so Whisper has adequate context
+        min_samples = int(sr * 0.5)
+        if len(audio_data) < min_samples:
+            pad_len = min_samples - len(audio_data)
+            audio_data = np.pad(audio_data, (0, pad_len), mode="constant")
+
         # Encode to clean standard 16-bit WAV bytes
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
