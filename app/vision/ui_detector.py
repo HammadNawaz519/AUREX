@@ -26,25 +26,34 @@ class UIDetector:
         try:
             import comtypes.client  # type: ignore
             import comtypes  # type: ignore
-            from comtypes import CoInitialize
-            CoInitialize()
+            from comtypes import CoInitialize, CoUninitialize
+            try:
+                CoInitialize()
+            except Exception:
+                pass
 
-            import comtypes.gen.UIAutomationClient as uia  # type: ignore
+            try:
+                import comtypes.gen.UIAutomationClient as uia  # type: ignore
 
-            UIA = comtypes.client.CreateObject(
-                "{ff48dba4-60ef-4201-aa87-54103eef594e}",
-                interface=uia.IUIAutomation,
-            )
+                UIA = comtypes.client.CreateObject(
+                    "{ff48dba4-60ef-4201-aa87-54103eef594e}",
+                    interface=uia.IUIAutomation,
+                )
 
-            if hwnd:
-                root = UIA.ElementFromHandle(hwnd)
-            else:
-                root = UIA.GetFocusedElement()
-                if root is None:
-                    root = UIA.GetRootElement()
+                if hwnd:
+                    root = UIA.ElementFromHandle(hwnd)
+                else:
+                    root = UIA.GetFocusedElement()
+                    if root is None:
+                        root = UIA.GetRootElement()
 
-            # Walk tree (BFS, max 200 nodes)
-            elements = self._walk_uia_tree(UIA, root, max_nodes=200)
+                # Walk tree (BFS, max 200 nodes)
+                elements = self._walk_uia_tree(UIA, root, max_nodes=200)
+            finally:
+                try:
+                    CoUninitialize()
+                except Exception:
+                    pass
         except Exception as e:
             logger.debug(f"UIA detection unavailable: {e}")
         return elements

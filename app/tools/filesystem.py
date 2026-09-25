@@ -49,7 +49,7 @@ class ReadFileTool(BaseTool):
 
 class WriteFileTool(BaseTool):
     name = "write_file"
-    description = "Create or overwrite a file with given text content inside approved workspace."
+    description = "Create or overwrite a file with given text content inside approved workspace or user's Desktop (e.g., 'desktop/notes.txt')."
     parameters = {
         "type": "object",
         "properties": {

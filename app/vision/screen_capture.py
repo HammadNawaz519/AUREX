@@ -88,12 +88,20 @@ class ScreenCaptureService:
 
     def _capture_qt(self, region: Optional[Tuple[int,int,int,int]] = None) -> Optional[Image.Image]:
         try:
-            from PySide6.QtWidgets import QApplication
-            from PySide6.QtGui import QGuiApplication, QImage
-            app = QApplication.instance()
+            import sys
+            import threading
+            if threading.current_thread() is not threading.main_thread():
+                return None
+            qt_widgets = sys.modules.get("PySide6.QtWidgets")
+            if not qt_widgets:
+                return None
+            app = qt_widgets.QApplication.instance()
             if not app:
                 return None
-            screen = QGuiApplication.primaryScreen()
+            qt_gui = sys.modules.get("PySide6.QtGui")
+            if not qt_gui:
+                return None
+            screen = qt_gui.QGuiApplication.primaryScreen()
             if not screen:
                 return None
             if region:
@@ -105,7 +113,7 @@ class ScreenCaptureService:
             if pixmap.isNull():
                 return None
 
-            qimg = pixmap.toImage().convertToFormat(QImage.Format.Format_RGB888)
+            qimg = pixmap.toImage().convertToFormat(qt_gui.QImage.Format.Format_RGB888)
             w, h = qimg.width(), qimg.height()
             b = bytes(qimg.constBits())
             return Image.frombuffer("RGB", (w, h), b, "raw", "RGB", qimg.bytesPerLine(), 1)

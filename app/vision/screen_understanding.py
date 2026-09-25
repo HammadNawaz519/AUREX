@@ -30,6 +30,7 @@ class ScreenUnderstandingService:
         self._active: bool = False          # screen-awareness ON/OFF
         self._current_state: Optional[ScreenState] = None
         self._state_lock = threading.Lock()
+        self._build_lock = threading.Lock()
 
         self._monitor_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -146,52 +147,66 @@ class ScreenUnderstandingService:
 
     def _build_screen_state(self) -> Optional[ScreenState]:
         """Full pipeline: capture → detect elements → OCR text → ScreenState."""
-        try:
-            capture_svc = self._capture
-            img = capture_svc.capture()
-            if img is None:
+        with self._build_lock:
+            try:
+                capture_svc = self._capture
+                img = capture_svc.capture()
+                hwnd = capture_svc.get_active_window_hwnd()
+                title = capture_svc.get_active_window_title()
+                w, h = capture_svc.get_screen_size()
+                app_name = self._parse_app_name(title)
+
+                if img is None:
+                    state = ScreenState(
+                        application=app_name,
+                        window_title=title,
+                        elements=[],
+                        visible_text="",
+                        screen_width=w,
+                        screen_height=h,
+                        is_browser=False,
+                        browser_url="",
+                    )
+                    with self._state_lock:
+                        self._current_state = state
+                    return state
+
+                # Detect UI elements (UIA preferred, vision fallback)
+                elements = self._detector.detect(image=img, hwnd=hwnd)
+
+                # OCR full visible text
+                visible_text = ""
+                if self._ocr.available:
+                    try:
+                        visible_text = self._ocr.extract_text(img)
+                    except Exception as e:
+                        logger.warning(f"OCR failed in build: {e}")
+
+                # Determine application name from window title
+                app_name = self._parse_app_name(title)
+
+                # Check if browser
+                is_browser, browser_url = self._detect_browser_url(title, elements)
+
+                state = ScreenState(
+                    application=app_name,
+                    window_title=title,
+                    elements=elements,
+                    visible_text=visible_text,
+                    screen_width=w,
+                    screen_height=h,
+                    is_browser=is_browser,
+                    browser_url=browser_url,
+                )
+
+                with self._state_lock:
+                    self._current_state = state
+
+                return state
+
+            except Exception as e:
+                logger.error(f"Screen state build failed: {e}")
                 return None
-
-            hwnd = capture_svc.get_active_window_hwnd()
-            title = capture_svc.get_active_window_title()
-            w, h = capture_svc.get_screen_size()
-
-            # Detect UI elements (UIA preferred, vision fallback)
-            elements = self._detector.detect(image=img, hwnd=hwnd)
-
-            # OCR full visible text
-            visible_text = ""
-            if self._ocr.available:
-                try:
-                    visible_text = self._ocr.extract_text(img)
-                except Exception as e:
-                    logger.warning(f"OCR failed in build: {e}")
-
-            # Determine application name from window title
-            app_name = self._parse_app_name(title)
-
-            # Check if browser
-            is_browser, browser_url = self._detect_browser_url(title, elements)
-
-            state = ScreenState(
-                application=app_name,
-                window_title=title,
-                elements=elements,
-                visible_text=visible_text,
-                screen_width=w,
-                screen_height=h,
-                is_browser=is_browser,
-                browser_url=browser_url,
-            )
-
-            with self._state_lock:
-                self._current_state = state
-
-            return state
-
-        except Exception as e:
-            logger.error(f"Screen state build failed: {e}")
-            return None
 
     def _parse_app_name(self, title: str) -> str:
         """Extract application name from window title."""
@@ -228,6 +243,11 @@ class ScreenUnderstandingService:
                 continue
 
             try:
+                # Do not contend with active user requests
+                if self._build_lock.locked():
+                    time.sleep(0.5)
+                    continue
+
                 img = self._capture.capture()
                 if img and self._capture.has_significant_change(img):
                     state = self._build_screen_state()

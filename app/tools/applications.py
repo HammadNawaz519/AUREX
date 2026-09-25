@@ -2,6 +2,7 @@
 
 import os
 import sys
+import re
 import subprocess
 import logging
 from pathlib import Path
@@ -109,9 +110,9 @@ class ApplicationIndexer:
     def find_app_path(cls, app_name: str) -> Optional[str]:
         clean_name = app_name.lower().strip()
 
-        # Remove filler words
-        clean_name = re.sub(r"^(?:the\s+|an\s+|a\s+)", "", clean_name).strip()
-        clean_name = re.sub(r"\s+(?:on|from)\s+(?:the\s+|my\s+)?desktop$", "", clean_name).strip()
+        # Remove filler words and action verbs
+        clean_name = re.sub(r"^(?:open\s+|launch\s+|start\s+|run\s+|the\s+|an\s+|a\s+)+", "", clean_name).strip()
+        clean_name = re.sub(r"\s+(?:on|from)\s+(?:the\s+|my\s+)?des[k]?top$", "", clean_name).strip()
         clean_name = re.sub(r"\s+app(?:lication)?$", "", clean_name).strip()
 
         # 1. Direct common mapping

@@ -33,19 +33,20 @@ CORE PRINCIPLES:
 1. PERSONALIZED: You serve Hammad. Be polite, confident, and articulate ("Right away, Hammad.", "On it, Hammad.", "Understood, Hammad.").
 2. CONCISE FOR SPEECH: Keep spoken responses natural and concise (1 to 2 clear, direct sentences). Never recite long bullet lists or code aloud unless specifically asked.
 3. EXECUTE PROACTIVELY: If Hammad asks to open an app, search, or perform an action, execute it directly with tools immediately.
-4. SCREEN & VISION: When asked to analyze the screen, assignments, or windows, identify key buttons, text, and tasks with precision.
-5. FAST & SHARP: Do not hesitate or overcomplicate simple tasks. Provide instant, high-intelligence answers.
+4. SCREEN & VISION: When asked to analyze the screen, assignments, windows, or desktop, identify key items, apps, and tasks with precision.
+5. DESKTOP & WORKSPACE: Saving to desktop is fully supported using 'desktop/<filename>' or the full path (e.g. write_file(path='desktop/notes.txt', content=...)).
+6. FAST & SHARP: Do not hesitate or overcomplicate simple tasks. Provide instant, high-intelligence answers.
 """
 
 # ─── Intent Classification ──────────────────────────────────────────────────────
 
 SCREEN_INTENT_PATTERNS = [
-    r"look at\s+(my\s+)?(screen|this|assignment|page|document|window|desktop)",
+    r"look at\s+(my\s+)?(screen|this|assignment|page|document|window|des[k]?top)",
     r"read\s+(this|the|my)\s+(assignment|document|page|screen|file)",
     r"what('s| is)\s+(on|visible|showing|displayed)",
-    r"see\s+(my\s+)?(screen|display|desktop|window)",
-    r"watch\s+(my\s+)?(screen|display|desktop)",
-    r"analyze\s+(my\s+)?(screen|this|desktop)",
+    r"see\s+(my\s+)?(screen|display|des[k]?top|window)",
+    r"watch\s+(my\s+)?(screen|display|des[k]?top)",
+    r"analyze\s+(my\s+)?(screen|this|des[k]?top)",
     r"do\s+(everything|all\s+the\s+tasks?|what\s+it\s+says|the\s+assignment)",
     r"complete\s+(this|the|my)\s+(assignment|task|form|setup)",
     r"fill\s+(this|the|in)\s+form",
@@ -53,6 +54,7 @@ SCREEN_INTENT_PATTERNS = [
     r"scroll\s+(down|up|to)",
     r"type\s+(in|into)",
     r"find\s+(the|a)\s+(button|link|field|input|icon|app)",
+    r"(?:on|from)\s+(the\s+|my\s+)?des[k]?top",
 ]
 
 PLAN_INTENT_PATTERNS = [
@@ -90,7 +92,7 @@ class AurexAgent:
 
         # Screen awareness state
         self._screen_aware: bool = False
-        self._screen_awareness_auto_off: bool = True  # disable after task
+        self._screen_awareness_auto_off: bool = False  # Keep watching when enabled by user
 
     # ─── Screen Awareness Toggle ─────────────────────────────────────────────
 
@@ -135,43 +137,65 @@ class AurexAgent:
                 return "Yes, sir. Systems are online and standing by."
             clean_text = stripped
 
-        # Toggle commands
         lower = clean_text.lower()
-        if any(p in lower for p in [
-            "see my screen", "watch my screen", "look at my screen", "see screen",
-            "watch screen", "look at screen", "enable screen awareness", "screen aware on",
-            "turn on screen awareness", "activate screen", "start watching"
-        ]):
-            self.enable_screen_awareness()
-            self._screen_awareness_auto_off = False
-            return "I am watching your screen, Hammad."
 
+        # Stop watching commands
         if any(p in lower for p in [
             "stop watching", "stop seeing my screen", "stop seeing screen",
             "stop watching my screen", "disable screen awareness", "screen aware off",
-            "turn off screen awareness", "stop looking at my screen", "screen off"
+            "turn off screen awareness", "stop looking at my screen", "screen off",
+            "stop seeing desktop", "stop watching desktop", "stop seeing destop", "stop watching destop"
         ]):
             self.disable_screen_awareness()
             self._screen_awareness_auto_off = True
-            return "I have stopped watching your screen, Hammad."
-
-        # Desktop items inspect
-        if any(p in lower for p in [
-            "see my desktop", "look at my desktop", "what's on my desktop",
-            "what is on my desktop", "check my desktop", "what is on the desktop",
-            "view desktop", "desktop items", "apps on desktop", "what is on desktop"
-        ]):
-            from app.tools.applications import get_desktop_items
-            items = get_desktop_items()
-            if items:
-                app_names = [it["name"] for it in items if not it["name"].startswith(".")]
-                app_list = ", ".join(app_names[:8])
-                ans = f"On your desktop, you have: {app_list}. Which one would you like me to open, Hammad?"
-            else:
-                ans = "Your desktop is clear with no shortcut icons, Hammad."
+            ans = "I have stopped watching your screen and desktop, Hammad."
             self.context.add_turn(clean_text, ans)
             self.memory.add_history("user", clean_text)
             self.memory.add_history("assistant", ans)
+            return ans
+
+        watch_desktop_triggers = [
+            "watch desktop", "watch destop", "watch my desktop", "watch my destop",
+            "see my desktop", "see desktop", "see destop", "see my destop",
+            "look at my desktop", "look at desktop", "look at destop", "look at my destop",
+            "what's on my desktop", "what is on my desktop", "check my desktop", "check destop",
+            "check my destop", "what is on the desktop", "view desktop", "desktop items",
+            "apps on desktop", "what is on desktop", "show desktop items", "inspect desktop"
+        ]
+        watch_screen_triggers = [
+            "see my screen", "watch my screen", "look at my screen", "see screen",
+            "watch screen", "look at screen", "enable screen awareness", "screen aware on",
+            "turn on screen awareness", "activate screen", "start watching"
+        ]
+
+        if any(p in lower for p in watch_screen_triggers + watch_desktop_triggers):
+            self.enable_screen_awareness()
+            self._screen_awareness_auto_off = False
+
+            # Active live perception
+            from app.vision.screen_understanding import get_screen_understanding_service
+            from app.tools.applications import get_desktop_items
+            svc = get_screen_understanding_service()
+            state = svc.capture_now()
+
+            win_title = state.window_title if state and state.window_title else ""
+            app_name = state.application if state and state.application else ""
+
+            items = get_desktop_items()
+            top_apps = [it["name"] for it in items if not it["name"].startswith(".")][:6]
+            apps_list = ", ".join(top_apps) if top_apps else "no desktop shortcuts"
+
+            win_name = win_title if win_title else "Desktop"
+            if any(p in lower for p in watch_desktop_triggers):
+                ans = f"I am watching your desktop and screen, Hammad. Active window: '{win_name}'. Desktop items detected: {apps_list}. What would you like me to open or run?"
+            else:
+                desc = f"Active window: '{win_name}' ({app_name})" if win_title else "display captured"
+                ans = f"I am watching your screen, Hammad. {desc}. What shall I do for you?"
+
+            self.context.add_turn(clean_text, ans)
+            self.memory.add_history("user", clean_text)
+            self.memory.add_history("assistant", ans)
+            self.event_bus.publish("state_changed", state=AgentState.SPEAKING)
             return ans
 
         # Correction check
@@ -456,8 +480,10 @@ class AurexAgent:
         planner = get_task_planner()
 
         # Enable screen for planning if needed
+        auto_enabled = False
         if not self._screen_aware and not screen_context:
             self.enable_screen_awareness()
+            auto_enabled = True
             try:
                 from app.vision.screen_understanding import get_screen_understanding_service
                 state = get_screen_understanding_service().capture_now()
@@ -477,7 +503,7 @@ class AurexAgent:
         # Execute
         result = planner.execute_plan(plan)
 
-        if self._screen_awareness_auto_off:
+        if auto_enabled and self._screen_awareness_auto_off:
             self.disable_screen_awareness()
 
         self.event_bus.publish("state_changed", state=AgentState.SPEAKING)
@@ -489,6 +515,7 @@ class AurexAgent:
     def _fallback_local_execute(self, text: str) -> str:
         """Autonomous offline rule-based execution engine, JARVIS style."""
         clean = text.lower().strip()
+        clean = re.sub(r"^(?:do\s+this\s+|please\s+|can\s+you\s+|could\s+you\s+|just\s+|now\s+)+", "", clean).strip()
         from datetime import datetime
 
         # Compound commands
@@ -609,11 +636,16 @@ class AurexAgent:
         if open_match:
             raw_target = re.sub(r"[,\.?!;]+$", "", open_match.group(1).strip())
             target = raw_target
-            desktop_m = re.match(r"^(.+?)\s+(?:on|from)\s+(?:the\s+|my\s+)?desktop$", raw_target)
+            desktop_m = re.match(r"^(.+?)\s+(?:on|from)\s+(?:the\s+|my\s+)?des[k]?top$", raw_target)
             if desktop_m:
                 extracted = desktop_m.group(1).strip()
-                if extracted not in ("this app", "the app", "this", "app"):
+                if extracted not in ("this app", "the app", "this", "app", ""):
                     target = extracted
+                else:
+                    from app.tools.applications import get_desktop_items
+                    items = get_desktop_items()
+                    top_names = [it["name"] for it in items if not it["name"].startswith(".")][:5]
+                    return f"Which app on your desktop should I open, Hammad? Detected: {', '.join(top_names)}."
             res = self.registry.execute_tool("open_application", {"name": target})
             if res.success:
                 self.pattern_detector.record_and_analyze(action_type="open_application", application=target)
@@ -627,14 +659,54 @@ class AurexAgent:
             res = self.registry.execute_tool("close_application", {"name": target})
             return res.message if res.success else str(res.error)
 
+        # File write / Save to desktop
+        save_desk_match = re.search(
+            r"(?:save|write|create\s+file)\s+(?:'|\")?(.*?)(?:'|\")?\s+(?:to|on)\s+(?:the\s+|my\s+)?des[k]?top(?:\s+as\s+([^\s:]+))?(?:\s*[:\-]\s*(.*))?$",
+            clean,
+            re.IGNORECASE
+        )
+        if not save_desk_match:
+            save_desk_match = re.search(
+                r"(?:save|write)\s+(?:to|on)\s+(?:the\s+|my\s+)?des[k]?top\s+(?:as\s+)?([^\s:]+)(?:\s*[:\-]\s*(.*))?$",
+                clean,
+                re.IGNORECASE
+            )
+        if save_desk_match:
+            g1 = (save_desk_match.group(1) or "").strip()
+            g2 = (save_desk_match.group(2) or "").strip() if len(save_desk_match.groups()) >= 2 and save_desk_match.group(2) else ""
+            g3 = (save_desk_match.group(3) or "").strip() if len(save_desk_match.groups()) >= 3 and save_desk_match.group(3) else ""
+
+            filename = ""
+            for candidate in (g2, g1):
+                if candidate and any(candidate.endswith(ext) for ext in (".txt", ".md", ".json", ".py", ".csv", ".log", ".bat")):
+                    filename = candidate
+                    break
+            if not filename:
+                filename = g2 or (g1 if g1 and len(g1.split()) == 1 else "notes.txt")
+            if not any(filename.endswith(ext) for ext in (".txt", ".md", ".json", ".py", ".csv", ".log", ".bat")):
+                filename += ".txt"
+
+            content = g3 or (g1 if g1 != filename else "")
+            if not content:
+                content = f"Saved by AUREX for Hammad at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+
+            res = self.registry.execute_tool("write_file", {"path": f"desktop/{filename}", "content": content})
+            if res.success:
+                return f"Right away, Hammad. Saved '{filename}' to your desktop."
+            return str(res.error)
+
         # Folder creation
-        folder_match = re.match(r"^(?:create|make)\s+(?:a\s+)?folder\s+(?:called\s+)?([^\s]+)(?:\s+on\s+([a-zA-Z]:[^\s]*))?", clean)
+        folder_match = re.match(r"^(?:create|make)\s+(?:a\s+)?folder\s+(?:called\s+)?([^\s]+)(?:\s+on\s+([a-zA-Z]:[^\s]*|des[k]?top))?", clean)
         if folder_match:
             name = folder_match.group(1)
             loc = folder_match.group(2)
-            settings = get_settings()
-            base_dir = loc if loc else settings.workspace_root
-            res = self.registry.execute_tool("create_folder", {"path": f"{base_dir}\\{name}"})
+            if loc and any(d in loc.lower() for d in ("desktop", "destop")):
+                target_path = f"desktop/{name}"
+            else:
+                settings = get_settings()
+                base_dir = loc if loc else settings.workspace_root
+                target_path = f"{base_dir}\\{name}"
+            res = self.registry.execute_tool("create_folder", {"path": target_path})
             return f"Folder '{name}' created, sir." if res.success else str(res.error)
 
         # File read
@@ -656,9 +728,8 @@ class AurexAgent:
             return res.message if res.success else str(res.error)
 
         return (
-            f"Understood, sir. Awaiting your instruction. "
-            "Say 'Hey AUREX, enable screen awareness' to let me see your display, "
-            "or give me a specific command."
+            f"Understood, Hammad. Awaiting your instruction. "
+            "Say 'AUREX, watch my desktop' or press Space to give me a task."
         )
 
 

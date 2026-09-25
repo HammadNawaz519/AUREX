@@ -16,6 +16,46 @@ class PathSecurityError(PermissionError):
     pass
 
 
+def get_user_desktop_path() -> Path:
+    """Return the real canonical path to the user's Windows Desktop directory."""
+    # Check OneDrive Desktop first (standard on Windows 10/11 with OneDrive sync)
+    onedrive_desktop = Path(os.path.expanduser("~/OneDrive/Desktop"))
+    if onedrive_desktop.exists() and onedrive_desktop.is_dir():
+        return onedrive_desktop.resolve()
+
+    # Try Windows Explorer User Shell Folders registry
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            val, _ = winreg.QueryValueEx(key, "Desktop")
+            expanded = Path(os.path.expandvars(val))
+            if expanded.exists():
+                return expanded.resolve()
+    except Exception:
+        pass
+
+    # Standard fallback
+    return Path(os.path.expanduser("~/Desktop")).resolve()
+
+
+def is_user_desktop_path(resolved_path: Path) -> bool:
+    """Check if a resolved path is within the user's Windows Desktop directory."""
+    try:
+        user_desktop = get_user_desktop_path()
+        resolved_str = str(resolved_path).lower()
+        desktop_str = str(user_desktop).lower()
+        if resolved_str == desktop_str or resolved_str.startswith(desktop_str + os.sep):
+            return True
+
+        # Check standard ~/Desktop if OneDrive redirected
+        std_desktop = str(Path(os.path.expanduser("~/Desktop")).resolve()).lower()
+        if resolved_str == std_desktop or resolved_str.startswith(std_desktop + os.sep):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def canonical_path(path_input: str | Path) -> Path:
     """
     Resolve a path to its strict canonical, real filesystem path.
@@ -35,6 +75,23 @@ def canonical_path(path_input: str | Path) -> Path:
 
     # Remove quotes if present
     clean_str = clean_str.strip('"').strip("'")
+
+    # Special alias handling for Desktop references
+    norm_lower = clean_str.lower().replace("/", "\\")
+    if norm_lower in ("desktop", "destop", "~/desktop", "~/destop", "%userprofile%\\desktop", "%userprofile%\\destop"):
+        return get_user_desktop_path()
+
+    for prefix in ("desktop\\", "destop\\", "~/desktop\\", "~/destop\\", "%userprofile%\\desktop\\", "%userprofile%\\destop\\"):
+        if norm_lower.startswith(prefix):
+            remainder = clean_str[len(prefix):]
+            return (get_user_desktop_path() / remainder).resolve()
+
+    user_profile = os.environ.get("USERPROFILE", "").lower()
+    if user_profile:
+        std_desk_prefix = (user_profile + "\\desktop\\").replace("/", "\\")
+        if norm_lower.startswith(std_desk_prefix):
+            remainder = clean_str[len(std_desk_prefix):]
+            return (get_user_desktop_path() / remainder).resolve()
 
     p = Path(clean_str)
 
@@ -91,10 +148,11 @@ def is_path_allowed(
     Validate whether an operation on path_input is permissible under AUREX security rules.
 
     Rules:
-    1. C: drive is STRICTLY READ-ONLY. No write, delete, move, create, or modify operation
-       is ever permitted if the destination resolves to C:.
-       Rejection message: 'ACCESS DENIED: AUREX is not permitted to modify the C: drive.'
-    2. Write operations must resolve into an approved workspace directory (e.g., D:\\AUREX, D:\\Projects).
+    1. C: drive is PROTECTED against OS and system file tampering.
+       The user's Desktop is explicitly permitted so the user and AUREX can create/save files to desktop.
+       All other C: locations (Windows, Program Files, System32, etc.) are strictly read-only.
+    2. Write operations must resolve into an approved workspace directory (e.g., D:\\AUREX, D:\\Projects)
+       or the user's personal Desktop directory.
     3. Traversal attempts (e.g., D:\\AUREX\\..\\..\\C:\\Windows) resolve to their actual destination
        and are rejected accordingly.
 
@@ -110,19 +168,20 @@ def is_path_allowed(
     # RULE 1: C: DRIVE WRITE PROTECTION (HARD POLICY)
     if is_write:
         if is_c_drive(resolved):
-            return False, "ACCESS DENIED: AUREX is not permitted to modify the C: drive."
+            if not is_user_desktop_path(resolved):
+                return False, "ACCESS DENIED: AUREX is not permitted to modify the C: drive (except your user Desktop)."
 
         # RULE 2: ALLOWED WORKSPACE ENFORCEMENT
         settings = get_settings()
         configured_allowed = allowed_dirs or settings.allowed_directories
 
-        # Canonicalize all approved directories
-        canonical_allowed: List[Path] = []
+        # Canonicalize all approved directories, always including user desktop
+        canonical_allowed: List[Path] = [get_user_desktop_path()]
         for d in configured_allowed:
             try:
                 can_d = canonical_path(d)
-                # Never allow C: in approved directories even if entered in config
-                if not is_c_drive(can_d):
+                # Allow user's desktop even if on C:, but block all other C: locations
+                if not is_c_drive(can_d) or is_user_desktop_path(can_d):
                     canonical_allowed.append(can_d)
             except Exception:
                 continue
