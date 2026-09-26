@@ -788,6 +788,15 @@ def file_processor(parameters: dict, player=None, speak=None) -> str:
 
     path = Path(file_path_str)
     if not path.exists():
+        try:
+            from actions.file_controller import _resolve_path
+            resolved = _resolve_path(file_path_str)
+            if resolved.exists():
+                path = resolved
+        except Exception:
+            pass
+
+    if not path.exists():
         return f"File not found: {file_path_str}"
     if not path.is_file():
         return f"Path is not a file: {file_path_str}"

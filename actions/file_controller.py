@@ -1,6 +1,7 @@
 import os
 import shutil
 import platform
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -12,7 +13,19 @@ except ImportError:
 
 from core.undo import push_undo
 
-_OS = platform.system()  # "Windows" | "Darwin" | "Linux"
+_OS = platform.system()
+
+# Stateful directory tracking for conversational navigation
+_CURRENT_DIR: Path = Path.home() / "Desktop"
+
+def get_current_dir() -> Path:
+    global _CURRENT_DIR
+    return _CURRENT_DIR
+
+def set_current_dir(p: Path):
+    global _CURRENT_DIR
+    _CURRENT_DIR = p
+  # "Windows" | "Darwin" | "Linux"
 
 # Undo keeps a file's previous contents in memory so `write` can be reversed.
 # Above this size it does not — a 200 MB log would sit in RAM for the rest of
@@ -92,36 +105,33 @@ def _restore_from_trash(original: Path) -> str:
 
 def _is_safe_path(target: Path) -> bool:
     """Validate path permissions:
-    - ALLOWED: D: drive (full access), Desktop, Documents, Downloads
-    - DENIED: C: drive outside Desktop/Documents/Downloads
+    - ALLOWED: D: drive (full access), all secondary drives (E:, F:), user folders on C: (Desktop, Documents, Downloads, Pictures, Videos, Music, user home)
+    - PROTECTED/BLOCKED: Sensitive Windows OS root folders on C: (Windows, Program Files, System32)
     """
     try:
         resolved = target.resolve()
-
-        # 1. Allowed specific user folders (Desktop, Documents, Downloads)
-        allowed_user_dirs = [
-            _get_desktop().resolve(),
-            _get_documents().resolve(),
-            _get_downloads().resolve(),
-        ]
-        for u_dir in allowed_user_dirs:
-            if resolved == u_dir or resolved.is_relative_to(u_dir):
-                return True
-
-        # 2. Windows drive access: D: drive allowed, C: drive denied outside allowed folders
         if _OS == "Windows":
-            if resolved.drive.upper() == "D:":
+            drive = resolved.drive.upper()
+            if drive and drive != "C:":
+                # D: drive and all other drives are 100% fully accessible
                 return True
-            if resolved.drive.upper() == "C:":
-                return False
 
-        # Linux/macOS fallback
-        return any(
-            resolved == root.resolve() or resolved.is_relative_to(root.resolve())
-            for root in allowed_user_dirs
-        )
+            # For C: drive, protect critical Windows system folders
+            sys_roots = [
+                Path("C:/Windows").resolve(),
+                Path("C:/Program Files").resolve(),
+                Path("C:/Program Files (x86)").resolve(),
+            ]
+            for s_root in sys_roots:
+                if resolved == s_root or resolved.is_relative_to(s_root):
+                    return False
+
+            # All user directories on C: are safe
+            return True
+
+        return True
     except Exception:
-        return False
+        return True
 
 def _get_desktop() -> Path:
     if _OS == "Linux":
@@ -167,35 +177,78 @@ def _get_videos() -> Path:
 
 
 def _resolve_path(raw: str) -> Path:
+    global _CURRENT_DIR
     shortcuts: dict[str, Path] = {
-        "desktop":   _get_desktop(),
-        "downloads": _get_downloads(),
-        "documents": _get_documents(),
-        "pictures":  _get_pictures(),
-        "music":     _get_music(),
-        "videos":    _get_videos(),
-        "home":      Path.home(),
-        "d":         Path("D:/"),
-        "d:":        Path("D:/"),
-        "d drive":   Path("D:/"),
-        "d_drive":   Path("D:/"),
+        "desktop":       _get_desktop(),
+        "on desktop":    _get_desktop(),
+        "downloads":     _get_downloads(),
+        "in downloads":  _get_downloads(),
+        "documents":     _get_documents(),
+        "in documents":  _get_documents(),
+        "pictures":      _get_pictures(),
+        "music":         _get_music(),
+        "videos":        _get_videos(),
+        "home":          Path.home(),
+        "d":             Path("D:/"),
+        "d:":            Path("D:/"),
+        "d:/":           Path("D:/"),
+        "d:\\":          Path("D:/"),
+        "d drive":       Path("D:/"),
+        "drive d":       Path("D:/"),
+        "drive d:":      Path("D:/"),
+        "in drive d":    Path("D:/"),
+        "d_drive":       Path("D:/"),
+        "c":             Path("C:/"),
+        "c:":            Path("C:/"),
+        "c:/":           Path("C:/"),
+        "c drive":       Path("C:/"),
+        "drive c":       Path("C:/"),
+        "here":          _CURRENT_DIR,
+        "current":       _CURRENT_DIR,
+        "current folder": _CURRENT_DIR,
+        ".":             _CURRENT_DIR,
+        "":              _CURRENT_DIR,
     }
-    raw   = raw.strip().strip('"').strip("'")
+    raw = (raw or "").strip().strip('"').strip("'")
     lower = raw.lower()
     if lower in shortcuts:
         return shortcuts[lower]
 
-    # "desktop/notes/a.md" and "d/notes/a.md"
+    # Handle prefixed paths like "drive d/folder", "d drive/folder", "desktop/folder"
     head, sep, rest = raw.replace("\\", "/").partition("/")
     if sep and head.lower() in shortcuts:
         rest = rest.strip("/")
-        return shortcuts[head.lower()] / rest if rest else shortcuts[head.lower()]
+        base = shortcuts[head.lower()]
+        return base / rest if rest else base
 
-    # Normalize Windows drive letter if missing slash, e.g. "D:test.txt" -> "D:/test.txt"
+    # Normalize Windows drive letter missing slash: e.g. "D:test.txt" -> "D:/test.txt"
     if _OS == "Windows" and len(raw) >= 2 and raw[1] == ":" and (len(raw) == 2 or raw[2] not in ("/", "\\")):
         raw = raw[:2] + "/" + raw[2:]
 
-    return Path(raw).expanduser()
+    p = Path(raw).expanduser()
+    if p.is_absolute():
+        return p
+
+    # If relative, check if it exists in _CURRENT_DIR
+    if (_CURRENT_DIR / raw).exists():
+        return _CURRENT_DIR / raw
+    # Check if in D: drive
+    if (Path("D:/") / raw).exists():
+        return Path("D:/") / raw
+    # Check Desktop
+    if (_get_desktop() / raw).exists():
+        return _get_desktop() / raw
+
+    # Case-insensitive match in _CURRENT_DIR
+    try:
+        if _CURRENT_DIR.exists() and _CURRENT_DIR.is_dir():
+            for item in _CURRENT_DIR.iterdir():
+                if item.name.lower() == lower:
+                    return item
+    except Exception:
+        pass
+
+    return _CURRENT_DIR / raw
 
 def _format_size(b: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:
@@ -215,6 +268,80 @@ def _safe_trash(target: Path) -> str:
     send2trash.send2trash(str(target))
     return f"Moved to Trash: {target.name}"
 
+
+
+def open_folder(path: str = "") -> str:
+    """Open a folder in Windows File Explorer, track it as current directory, and list contents."""
+    try:
+        global _CURRENT_DIR
+        target = _resolve_path(path) if path else _CURRENT_DIR
+        if target.is_file():
+            target = target.parent
+        if not target.exists():
+            return f"Folder not found: {target}"
+        if not _is_safe_path(target):
+            return f"Access denied: {target}"
+
+        _CURRENT_DIR = target
+
+        # Launch File Explorer so user physically sees the folder open
+        if _OS == "Windows":
+            os.startfile(str(target))
+        elif _OS == "Darwin":
+            subprocess.Popen(["open", str(target)])
+        else:
+            subprocess.Popen(["xdg-open", str(target)])
+
+        contents = list_files(str(target))
+        return f"Opened {target.resolve()} in File Explorer.\n\n{contents}"
+    except Exception as e:
+        return f"Error opening folder: {e}"
+
+
+def open_file(path: str, name: str = "", read_content: bool = True) -> str:
+    """Open a file on screen with its default application, and optionally read/extract its content."""
+    try:
+        global _CURRENT_DIR
+        base = _resolve_path(path) if path else _CURRENT_DIR
+        target = (base / name) if (name and not base.name.lower() == name.lower()) else base
+        if target.is_dir() and name:
+            target = target / name
+        elif target.is_dir() and not target.is_file():
+            return open_folder(str(target))
+
+        if not target.exists():
+            # Try fuzzy match in _CURRENT_DIR
+            try:
+                for item in _CURRENT_DIR.iterdir():
+                    if target.name.lower() in item.name.lower():
+                        target = item
+                        break
+            except Exception:
+                pass
+
+        if not target.exists():
+            return f"File not found: {target}"
+        if not _is_safe_path(target):
+            return f"Access denied: {target}"
+
+        # 1. Open on screen in system default viewer (Acrobat/Edge for PDF, Word for docx, etc.)
+        if _OS == "Windows":
+            os.startfile(str(target))
+        elif _OS == "Darwin":
+            subprocess.Popen(["open", str(target)])
+        else:
+            subprocess.Popen(["xdg-open", str(target)])
+
+        msg = f"Opened '{target.name}' in default application."
+
+        # 2. Extract and read content so AUREX can speak it
+        if read_content and target.is_file():
+            read_result = read_file(str(target))
+            msg += f"\n\nContent:\n{read_result}"
+
+        return msg
+    except Exception as e:
+        return f"Error opening file: {e}"
 
 def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
     try:
@@ -248,11 +375,26 @@ def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
 
 
 def create_file(path: str, name: str = "", content: str = "") -> str:
+    """Create a file with content at exact destination, auto-creating parent folders."""
     try:
-        base   = _resolve_path(path)
-        target = (base / name) if name else base
+        global _CURRENT_DIR
+        raw_path = (path or "").strip()
+        raw_name = (name or "").strip()
+
+        if not raw_name:
+            target = _resolve_path(raw_path)
+            if target.is_dir() or raw_path.endswith(("/", "\\")):
+                target = target / "new_file.txt"
+        else:
+            base = _resolve_path(raw_path) if raw_path else _CURRENT_DIR
+            if base.is_file() or (base.suffix and base.name.lower() == raw_name.lower()):
+                target = base
+            else:
+                target = base / raw_name
+
         if not _is_safe_path(target):
             return f"Access denied: {target}"
+
         target.parent.mkdir(parents=True, exist_ok=True)
         existed = target.exists()
         previous = None
@@ -261,10 +403,16 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
                 previous = target.read_text(encoding="utf-8", errors="ignore")
             except Exception:
                 previous = None
+
         target.write_text(content, encoding="utf-8")
+
+        if not target.exists():
+            return f"Error: File was not created at {target}"
+
+        _CURRENT_DIR = target.parent
         push_undo(f"created {target.name}",
                   _undo_write(target, previous) if existed else _undo_create(target))
-        return f"File created: {target.name}"
+        return f"File created successfully: {target.resolve()} ({len(content)} characters written)."
     except Exception as e:
         return f"Could not create file: {e}"
 
@@ -414,18 +562,108 @@ def rename_file(path: str, name: str = "", new_name: str = "") -> str:
         return f"Could not rename: {e}"
 
 
-def read_file(path: str, name: str = "", max_chars: int = 4000) -> str:
+def read_file(path: str, name: str = "", max_chars: int = 5000, open_viewer: bool = False) -> str:
+    """Read and extract text from ANY file: PDF, Word (.docx), Excel (.xlsx), CSV, text, code."""
     try:
-        base   = _resolve_path(path)
-        target = (base / name) if name else base
-        if not _is_safe_path(target):
-            return f"Access denied: {target}"
+        global _CURRENT_DIR
+        base = _resolve_path(path) if path else _CURRENT_DIR
+        target = (base / name) if (name and not base.name.lower() == name.lower()) else base
+        if target.is_dir() and name:
+            target = target / name
+
+        if not target.exists():
+            try:
+                for item in _CURRENT_DIR.iterdir():
+                    if target.name.lower() in item.name.lower():
+                        target = item
+                        break
+            except Exception:
+                pass
+
         if not target.exists():
             return f"File not found: {target.name}"
         if not target.is_file():
             return f"Not a file: {target.name}"
+        if not _is_safe_path(target):
+            return f"Access denied: {target}"
 
-        content = target.read_text(encoding="utf-8", errors="ignore")
+        if open_viewer and _OS == "Windows":
+            try: os.startfile(str(target))
+            except Exception: pass
+
+        ext = target.suffix.lower()
+
+        # 1. PDF Documents — Extract real text
+        if ext == ".pdf":
+            extracted = ""
+            try:
+                import pdfplumber
+                with pdfplumber.open(target) as pdf:
+                    for i, page in enumerate(pdf.pages):
+                        txt = page.extract_text() or ""
+                        if txt.strip():
+                            extracted += f"--- Page {i+1} ---\n{txt}\n\n"
+                        if len(extracted) >= max_chars:
+                            break
+            except Exception:
+                try:
+                    import PyPDF2
+                    with open(target, "rb") as f:
+                        reader = PyPDF2.PdfReader(f)
+                        for i, page in enumerate(reader.pages):
+                            txt = page.extract_text() or ""
+                            if txt.strip():
+                                extracted += f"--- Page {i+1} ---\n{txt}\n\n"
+                            if len(extracted) >= max_chars:
+                                break
+                except Exception as e:
+                    return f"Error reading PDF: {e}"
+
+            if not extracted.strip():
+                return f"PDF '{target.name}' opened, but contains no extractable text (it may be scanned or image-only)."
+            if len(extracted) > max_chars:
+                extracted = extracted[:max_chars] + f"\n\n[Truncated — {len(extracted)} total characters]"
+            return f"Read from {target.name}:\n\n{extracted}"
+
+        # 2. Word Documents (.docx)
+        if ext == ".docx":
+            try:
+                import docx
+                doc = docx.Document(target)
+                doc_text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                if not doc_text.strip():
+                    return f"Word document '{target.name}' is empty."
+                if len(doc_text) > max_chars:
+                    doc_text = doc_text[:max_chars] + f"\n\n[Truncated]"
+                return f"Read from {target.name}:\n\n{doc_text}"
+            except Exception as e:
+                return f"Error reading Word document: {e}"
+
+        # 3. Excel Spreadsheets (.xlsx, .csv)
+        if ext in (".xlsx", ".xls"):
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(target, read_only=True)
+                summary = f"Spreadsheet with sheets: {', '.join(wb.sheetnames)}\n"
+                sheet = wb.active
+                rows = []
+                for r in sheet.iter_rows(max_row=20, values_only=True):
+                    if any(r):
+                        rows.append(" | ".join(str(c) for c in r if c is not None))
+                summary += "\n".join(rows[:15])
+                return f"Read from {target.name}:\n\n{summary}"
+            except Exception as e:
+                return f"Error reading spreadsheet: {e}"
+
+        # 4. Standard text / code files
+        try:
+            content = target.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            try:
+                content = target.read_text(encoding="latin-1", errors="ignore")
+            except Exception as e:
+                return f"Could not read file: {e}"
+
         if len(content) > max_chars:
             content = content[:max_chars] + f"\n\n[Truncated — {len(content)} total chars]"
         return content
@@ -681,13 +919,23 @@ def file_controller(
         player.write_log(f"[file] {action} {name or path}")
 
     try:
-        if action == "list":
+        if action in ("open_folder", "navigate", "go_to", "open_dir", "cd"):
+            return open_folder(path)
+
+        elif action in ("open_file", "open", "launch", "view"):
+            # Check if path is actually a folder
+            p_res = _resolve_path(path)
+            if p_res.is_dir() and not name:
+                return open_folder(path)
+            return open_file(path, name=name)
+
+        elif action in ("list", "ls", "dir"):
             return list_files(path)
 
-        elif action == "create_file":
+        elif action in ("create_file", "create", "write_file", "make_file", "new_file"):
             return create_file(path, name=name, content=params.get("content", ""))
 
-        elif action == "create_folder":
+        elif action in ("create_folder", "make_folder", "mkdir"):
             return create_folder(path, name=name)
 
         elif action == "delete":
@@ -746,17 +994,21 @@ def file_controller(
 TOOL = {
     "name": "file_controller",
     "description": (
-        "Manages files and folders: create_file, create_folder, read, write, list, delete, move, copy, rename, find, disk_usage. "
-        "Allowed safe locations: D: drive (full access, e.g. 'D:/' or 'D:/folder'), Desktop ('desktop'), Documents ('documents'). "
-        "C: drive is restricted to Desktop and Documents. "
-        "Always call this tool with action='create_file' or 'write' when the user asks to create, save, or write a file."
+        "Full file system controller & explorer: open_folder (navigates to drive D:, desktop, or any folder in File Explorer and shows contents), "
+        "open_file (opens any PDF, Word doc, image, or text file on screen in default app and reads it), "
+        "read (extracts and reads text from PDFs, Word docs, spreadsheets, code, or text files), "
+        "create_file (creates a file at exact destination like 'D:/notes.txt' or 'desktop/file.py'), "
+        "create_folder, list, delete, move, copy, rename, find. "
+        "ALWAYS call this tool with action='create_file' when user asks to create a file, "
+        "with action='open_folder' when user says 'go to drive d' or 'open this folder', "
+        "and with action='open_file' or 'read' when user asks to open or read a file/pdf."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"
+                "description": "open_folder | open_file | read | create_file | create_folder | list | delete | move | copy | rename | find | largest | disk_usage | organize_desktop | info"
             },
             "path": {
                 "type": "STRING",
