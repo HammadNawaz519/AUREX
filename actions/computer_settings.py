@@ -258,20 +258,18 @@ def full_screen():
 
 
 def shrink_aurex():
-    """Shrink AUREX into a compact floating desktop pill bubble."""
+    """Delegate to plugins.shrink if called."""
     try:
-        from ui import shrink_app_to_pill
-        ok = shrink_app_to_pill()
-        return "AUREX shrunk to floating desktop pill bubble." if ok else "Done: shrink to pill."
+        from plugins.shrink import shrink
+        return "Shrunk to floating pill." if shrink() else "Done."
     except Exception as e:
         return f"Shrink error: {e}"
 
 def restore_aurex():
-    """Restore AUREX from pill bubble back to normal full window."""
+    """Delegate to plugins.shrink if called."""
     try:
-        from ui import restore_app_from_pill
-        ok = restore_app_from_pill()
-        return "AUREX restored to normal window." if ok else "Done: restore window."
+        from plugins.shrink import restore
+        return "Restored full window." if restore() else "Done."
     except Exception as e:
         return f"Restore error: {e}"
 
@@ -627,16 +625,6 @@ ACTION_MAP: dict[str, callable] = {
     "close_window":        close_window,
     "full_screen":         full_screen,
     "fullscreen":          full_screen,
-        "shrink":              shrink_aurex,
-    "shrink_to_pill":      shrink_aurex,
-    "pill":                shrink_aurex,
-    "pill_mode":           shrink_aurex,
-    "mini_mode":           shrink_aurex,
-    "bubble_mode":         shrink_aurex,
-    "chote_hojao":         shrink_aurex,
-    "restore":             restore_aurex,
-    "expand":              restore_aurex,
-    "bade_hojao":          restore_aurex,
     "minimize":            minimize_window,
     "maximize":            maximize_window,
     "snap_left":           snap_left,
@@ -738,8 +726,6 @@ _ALIASES = {
     "full_screen":     ("fullscreen", "maximise screen"),
     "show_desktop":    ("minimise everything", "go to desktop"),
     "lock_screen":     ("lock", "lock the pc", "lock computer"),
-    "shrink":          ("shrink", "pill", "pill mode", "mini mode", "chote hojao", "be small", "small pill", "bubble mode", "shrink yourself"),
-    "restore":         ("expand", "restore", "bade hojao", "full mode", "normal mode", "wapis aao"),
     "sleep_display":   ("screen off", "turn off the screen", "display off"),
     "dark_mode":       ("night mode", "light mode", "toggle theme"),
     "toggle_wifi":     ("wifi", "wi-fi", "internet off", "internet on"),
@@ -834,12 +820,6 @@ def computer_settings(
 
     action = raw_action.lower().strip().replace(" ", "_").replace("-", "_")
 
-    # If the user requested to shrink or minimize AUREX into pill mode
-    check_text = f"{action} {description} {value or ''}".lower()
-    if any(k in check_text for k in ("shrink", "pill", "chote", "bubble", "mini_mode", "be small", "small pill")):
-        action = "shrink"
-    elif any(k in check_text for k in ("expand", "restore", "bade", "full mode", "normal mode", "wapis")):
-        action = "restore"
 
     if not action:
         return _suggest(description or raw_action)
@@ -970,7 +950,7 @@ TOOL = {
                     "volume_up | volume_down | volume_set | mute | "
                     "brightness_up | brightness_down | sleep_display | "
                     "pause_video | close_app | close_window | full_screen | "
-                    "shrink | restore | minimize | maximize | snap_left | snap_right | "
+                    "minimize | maximize | snap_left | snap_right | "
                     "switch_window | show_desktop | task_manager | focus_search | "
                     "refresh_page | close_tab | new_tab | next_tab | prev_tab | "
                     "go_back | go_forward | zoom_in | zoom_out | zoom_reset | "

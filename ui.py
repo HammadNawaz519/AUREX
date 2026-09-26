@@ -33,18 +33,18 @@ def get_active_window() -> MainWindow | None:
     return _ACTIVE_WIN
 
 def shrink_app_to_pill() -> bool:
-    global _ACTIVE_WIN
-    if _ACTIVE_WIN is not None:
-        QTimer.singleShot(0, _ACTIVE_WIN.shrink_to_circle)
-        return True
-    return False
+    try:
+        from plugins.shrink import shrink
+        return shrink()
+    except Exception:
+        return False
 
 def restore_app_from_pill() -> bool:
-    global _ACTIVE_WIN
-    if _ACTIVE_WIN is not None:
-        QTimer.singleShot(0, _ACTIVE_WIN.restore_from_circle)
-        return True
-    return False
+    try:
+        from plugins.shrink import restore
+        return restore()
+    except Exception:
+        return False
 
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -4181,7 +4181,7 @@ class MainWindow(QMainWindow):
         pill_btn.setFont(QFont("Segoe UI", 7))
         pill_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         pill_btn.setStyleSheet(_BTN_STYLE_DIM)
-        pill_btn.clicked.connect(self.shrink_to_circle)
+        pill_btn.clicked.connect(shrink_app_to_pill)
         lay.addWidget(pill_btn)
 
         cust_btn = QPushButton("⚙  CUSTOMISE ASSISTANT")
@@ -5429,105 +5429,17 @@ class MainWindow(QMainWindow):
 
 
     def shrink_to_circle(self):
-        """Smoothly shrink window to compact floating circle pill with wave animation stuck to desktop."""
-        if getattr(self, '_is_circle_mode', False):
-            return
-        self._is_circle_mode = True
-        self._normal_geo = self.geometry()
-        sz = 100
-        screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
-        ag = screen.availableGeometry()
-        _margin = 16
-        # Stick pill to desktop bottom-right corner
-        target_x = ag.right() - sz - _margin
-        target_y = ag.bottom() - sz - 40
-        target_rect = QRect(target_x, target_y, sz, sz)
-
-        if hasattr(self, '_header_widget'): self._header_widget.hide()
-        if hasattr(self, '_right_panel'): self._right_panel.hide()
-        if hasattr(self, '_footer_widget'): self._footer_widget.hide()
-        if hasattr(self, '_content_panel'): self._content_panel.hide()
-        if hasattr(self, '_quiz_panel'): self._quiz_panel.hide()
-        if hasattr(self, '_quick_drawer'): self._quick_drawer.hide()
-
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self.show()
-
-        self._circle_anim = QPropertyAnimation(self, b"geometry")
-        self._circle_anim.setDuration(360)
-        self._circle_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        self._circle_anim.setStartValue(self.geometry())
-        self._circle_anim.setEndValue(target_rect)
-
-        from PyQt6.QtGui import QRegion
-        def _on_shrink_done():
-            self.setMask(QRegion(0, 0, sz, sz, QRegion.RegionType.Ellipse))
-            self._start_pill_wave()
-            self.hud.update()
-
-        self._circle_anim.finished.connect(_on_shrink_done)
-        self._circle_anim.start()
-
-    def _start_pill_wave(self):
-        """Drive a smooth multi-ring animation on the HUD while in circle/pill mode."""
-        self._pill_wave_phase  = 0.0
-        self._pill_ring_phase  = 0.0   # secondary ring counter
-        self._pill_wave_tmr = QTimer(self)
-        def _tick():
-            if not getattr(self, '_is_circle_mode', False):
-                self._pill_wave_tmr.stop()
-                return
-            self._pill_wave_phase  = (self._pill_wave_phase  + 0.09) % (2 * math.pi)
-            self._pill_ring_phase  = (self._pill_ring_phase  + 0.05) % (2 * math.pi)
-            # Oscillating amplitude — two sine waves for richer motion
-            amp = 0.40 + 0.30 * math.sin(self._pill_wave_phase) \
-                       + 0.15 * math.sin(self._pill_ring_phase * 1.7)
-            amp = max(0.0, min(1.0, amp))
-            self.hud._live_amp = amp
-            self.hud.update()
-        self._pill_wave_tmr.timeout.connect(_tick)
-        self._pill_wave_tmr.start(25)  # ~40 fps smooth animation
+        shrink_app_to_pill()
 
     def restore_from_circle(self):
-        """Smoothly restore window from circular pill to full layout."""
-        if not getattr(self, '_is_circle_mode', False):
-            return
-        self._is_circle_mode = False
-        # Stop the pill wave animation
-        if hasattr(self, '_pill_wave_tmr'):
-            try: self._pill_wave_tmr.stop()
-            except Exception: pass
-        self.hud._live_amp = 0.0
-        self.clearMask()
-        target_rect = getattr(self, '_normal_geo', None)
-        if not target_rect or target_rect.width() < 300:
-            screen = QApplication.primaryScreen().availableGeometry()
-            _margin = 16
-            target_rect = QRect(
-                screen.right() - _DEFAULT_W - _margin,
-                screen.top() + _margin,
-                _DEFAULT_W, _DEFAULT_H,
-            )
-
-        self._restore_anim = QPropertyAnimation(self, b"geometry")
-        self._restore_anim.setDuration(380)
-        self._restore_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        self._restore_anim.setStartValue(self.geometry())
-        self._restore_anim.setEndValue(target_rect)
-
-        def _on_restore_done():
-            if hasattr(self, '_header_widget'): self._header_widget.show()
-            self._apply_window_mask()
-            self.hud.update()
-
-        self._restore_anim.finished.connect(_on_restore_done)
-        self._restore_anim.start()
+        restore_app_from_pill()
 
     def toggle_circle_mode(self):
-        if getattr(self, '_is_circle_mode', False):
-            self.restore_from_circle()
-        else:
-            self.shrink_to_circle()
+        try:
+            from plugins.shrink import toggle
+            toggle()
+        except Exception:
+            pass
 
     def _check_circle_commands(self, text: str) -> bool:
         tl = (text or "").lower().strip()
@@ -5543,10 +5455,10 @@ class MainWindow(QMainWindow):
             "wapis aao", "wapas aao", "wapis hojao"
         ]
         if any(st in tl for st in shrink_triggers):
-            QTimer.singleShot(0, self.shrink_to_circle)
+            shrink_app_to_pill()
             return True
         if any(rt in tl for rt in restore_triggers):
-            QTimer.singleShot(0, self.restore_from_circle)
+            restore_app_from_pill()
             return True
         return False
 

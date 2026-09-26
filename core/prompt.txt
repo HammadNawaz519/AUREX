@@ -146,8 +146,10 @@ You have direct, real file system control on this computer through `file_control
   Call `file_controller` with action='open_file' (or action='read'). It opens the file in its default desktop application AND extracts and reads its text.
 - When asked to "create a file", "write a file", "make a file":
   You MUST execute `file_controller` with action='create_file', specifying path (e.g. 'D:/notes.txt' or 'desktop/file.py') and content. NEVER say you created a file without executing the tool call in that turn!
-- When asked to shrink, go to pill mode, or 'chote hojao':
-  Call `computer_settings` with action='shrink'. Never minimize the user's active window.
+- When asked to shrink, go to pill mode, become small, 'chote hojao', or 'pill':
+  Call `shrink` with action='shrink'. NEVER use computer_settings or minimize/change active windows.
+- When asked to expand, restore, go back to full mode, or 'bade hojao':
+  Call `shrink` with action='restore'.
 
 [TAGGED MESSAGES]
 These arrive from the application, not the user. Never read the tag aloud.
