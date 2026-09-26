@@ -90,17 +90,35 @@ def _restore_from_trash(original: Path) -> str:
             f"automatically, but it is there and can be restored by hand.")
 
 
-_SAFE_ROOTS: list[Path] = [
-    Path.home(),
-]
-
 def _is_safe_path(target: Path) -> bool:
-    """Is the given path inside _SAFE_ROOTS? If not, reject the operation."""
+    """Validate path permissions:
+    - ALLOWED: D: drive (full access), Desktop, Documents, Downloads
+    - DENIED: C: drive outside Desktop/Documents/Downloads
+    """
     try:
         resolved = target.resolve()
+
+        # 1. Allowed specific user folders (Desktop, Documents, Downloads)
+        allowed_user_dirs = [
+            _get_desktop().resolve(),
+            _get_documents().resolve(),
+            _get_downloads().resolve(),
+        ]
+        for u_dir in allowed_user_dirs:
+            if resolved == u_dir or resolved.is_relative_to(u_dir):
+                return True
+
+        # 2. Windows drive access: D: drive allowed, C: drive denied outside allowed folders
+        if _OS == "Windows":
+            if resolved.drive.upper() == "D:":
+                return True
+            if resolved.drive.upper() == "C:":
+                return False
+
+        # Linux/macOS fallback
         return any(
             resolved == root.resolve() or resolved.is_relative_to(root.resolve())
-            for root in _SAFE_ROOTS
+            for root in allowed_user_dirs
         )
     except Exception:
         return False
@@ -157,22 +175,25 @@ def _resolve_path(raw: str) -> Path:
         "music":     _get_music(),
         "videos":    _get_videos(),
         "home":      Path.home(),
+        "d":         Path("D:/"),
+        "d:":        Path("D:/"),
+        "d drive":   Path("D:/"),
+        "d_drive":   Path("D:/"),
     }
     raw   = raw.strip().strip('"').strip("'")
     lower = raw.lower()
     if lower in shortcuts:
         return shortcuts[lower]
 
-    # "desktop/notes/a.md" and "desktop\notes\a.md" — a shortcut followed by a
-    # sub-path.  Without this branch the whole string falls through to the
-    # relative-path return below and is resolved against the process CWD instead
-    # of the real Desktop: an "Access denied" when the project lives outside the
-    # home directory, or — worse — a silent write into a stray "desktop" folder
-    # inside the project when it lives inside it.
+    # "desktop/notes/a.md" and "d/notes/a.md"
     head, sep, rest = raw.replace("\\", "/").partition("/")
     if sep and head.lower() in shortcuts:
         rest = rest.strip("/")
         return shortcuts[head.lower()] / rest if rest else shortcuts[head.lower()]
+
+    # Normalize Windows drive letter if missing slash, e.g. "D:test.txt" -> "D:/test.txt"
+    if _OS == "Windows" and len(raw) >= 2 and raw[1] == ":" and (len(raw) == 2 or raw[2] not in ("/", "\\")):
+        raw = raw[:2] + "/" + raw[2:]
 
     return Path(raw).expanduser()
 
@@ -724,7 +745,12 @@ def file_controller(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "file_controller",
-    "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
+    "description": (
+        "Manages files and folders: create_file, create_folder, read, write, list, delete, move, copy, rename, find, disk_usage. "
+        "Allowed safe locations: D: drive (full access, e.g. 'D:/' or 'D:/folder'), Desktop ('desktop'), Documents ('documents'). "
+        "C: drive is restricted to Desktop and Documents. "
+        "Always call this tool with action='create_file' or 'write' when the user asks to create, save, or write a file."
+    ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
@@ -734,7 +760,7 @@ TOOL = {
             },
             "path": {
                 "type": "STRING",
-                "description": "File/folder path or shortcut: desktop, downloads, documents, home"
+                "description": "File or folder path or shortcut: 'desktop', 'documents', 'downloads', 'D:/', 'D:/folder', or direct file path 'D:/file.txt'"
             },
             "destination": {
                 "type": "STRING",
