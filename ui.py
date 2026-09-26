@@ -956,7 +956,7 @@ class MetricBar(QWidget):
 
         p.setBrush(QBrush(qcol(C.PANEL2)))
         p.setPen(QPen(qcol(C.BORDER_A), 1))
-        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 4, 4)
+        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 8, 8)
 
         bar_h   = 4
         bar_y   = H - bar_h - 5
@@ -1005,14 +1005,15 @@ class LogWidget(QTextEdit):
                 background: {C.PANEL};
                 color: {C.TEXT};
                 border: 1px solid {C.BORDER};
-                border-radius: 4px;
-                padding: 6px;
+                border-radius: 12px;
+                padding: 10px;
                 selection-background-color: {C.PRI_GHO};
             }}
             QScrollBar:vertical {{
-                background: {C.BG};
+                background: transparent;
                 width: 8px;
                 border: none;
+                margin: 8px 2px 8px 0;
             }}
             QScrollBar::handle:vertical {{
                 background: {C.BORDER_B};
@@ -3794,10 +3795,10 @@ class MainWindow(QMainWindow):
 
         info_panel = QWidget()
         info_panel.setStyleSheet(
-            f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;"
+            f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 10px;"
         )
         ip_lay = QVBoxLayout(info_panel)
-        ip_lay.setContentsMargins(6, 5, 6, 5)
+        ip_lay.setContentsMargins(8, 7, 8, 7)
         ip_lay.setSpacing(3)
 
         self._uptime_lbl = QLabel("UP  --:--")
@@ -3831,7 +3832,7 @@ class MainWindow(QMainWindow):
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(
                 f"color: {col}; background: {C.PANEL2};"
-                f"border: 1px solid {C.BORDER_A}; border-radius: 3px; padding: 4px;"
+                f"border: 1px solid {C.BORDER_A}; border-radius: 8px; padding: 6px;"
             )
             lay.addWidget(lbl)
 
@@ -3903,7 +3904,7 @@ class MainWindow(QMainWindow):
         _BTN_STYLE_PRI = f"""
             QPushButton {{
                 background: #F0F9FF; color: {C.PRI};
-                border: 1px solid #BAE6FD; border-radius: 12px;
+                border: 1px solid #BAE6FD; border-radius: 13px;
                 text-align: left; padding: 0 10px; font-weight: 600;
             }}
             QPushButton:hover {{ background: #E0F2FE; border-color: {C.PRI}; }}
@@ -3911,7 +3912,7 @@ class MainWindow(QMainWindow):
         _BTN_STYLE_DIM = f"""
             QPushButton {{
                 background: #FFFFFF; color: #334155;
-                border: 1px solid #E2E8F0; border-radius: 12px;
+                border: 1px solid #E2E8F0; border-radius: 13px;
                 text-align: left; padding: 0 10px; font-weight: 500;
             }}
             QPushButton:hover {{ background: #F8FAFC; color: #0F172A; border-color: #CBD5E1; }}
@@ -4146,14 +4147,14 @@ class MainWindow(QMainWindow):
 
         dismiss = QPushButton("DISMISS  ✕")
         dismiss.setFont(QFont("Segoe UI", 7))
-        dismiss.setFixedHeight(18)
+        dismiss.setFixedHeight(20)
         dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
         dismiss.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 2px; padding: 0 5px;
+                background: #F1F5F9; color: {C.TEXT_DIM};
+                border: 1px solid {C.BORDER}; border-radius: 10px; padding: 0 8px;
             }}
-            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; background: #E2E8F0; }}
         """)
         dismiss.clicked.connect(w.hide)
         hdr.addWidget(dismiss)
@@ -4176,12 +4177,12 @@ class MainWindow(QMainWindow):
                 background: {C.DARK};
                 color: {C.TEXT};
                 border: 1px solid {C.BORDER};
-                border-radius: 3px;
-                padding: 6px 8px;
+                border-radius: 12px;
+                padding: 10px 12px;
                 selection-background-color: {C.PRI_GHO};
             }}
             QScrollBar:vertical {{
-                background: {C.BG}; width: 6px; border: none;
+                background: transparent; width: 6px; border: none; margin: 6px 2px;
             }}
             QScrollBar::handle:vertical {{
                 background: {C.BORDER_B}; border-radius: 3px; min-height: 16px;
@@ -4309,14 +4310,14 @@ class MainWindow(QMainWindow):
         b = QPushButton(text)
         b.setFont(QFont("Segoe UI", 8))
         b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setMinimumHeight(24)
+        b.setMinimumHeight(28)
         edge = C.BORDER_B if primary else C.BORDER
         col = C.PRI if primary else C.TEXT_MED
         b.setStyleSheet(f"""
             QPushButton {{
                 background: {C.PANEL2}; color: {col};
-                border: 1px solid {edge}; border-radius: 2px;
-                padding: 3px 9px; text-align: left;
+                border: 1px solid {edge}; border-radius: 14px;
+                padding: 4px 12px; text-align: left;
             }}
             QPushButton:hover {{ color: {C.WHITE}; border-color: {C.PRI_DIM}; }}
             QPushButton:disabled {{ color: {C.TEXT_DIM}; border-color: {C.BORDER}; }}
@@ -4358,14 +4359,14 @@ class MainWindow(QMainWindow):
 
         quit_btn = QPushButton("DISMISS  ✕")
         quit_btn.setFont(QFont("Segoe UI", 7))
-        quit_btn.setFixedHeight(18)
+        quit_btn.setFixedHeight(20)
         quit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         quit_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 2px; padding: 0 5px;
+                background: #F1F5F9; color: {C.TEXT_DIM};
+                border: 1px solid {C.BORDER}; border-radius: 10px; padding: 0 8px;
             }}
-            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; background: #E2E8F0; }}
         """)
         quit_btn.clicked.connect(self._hide_quiz)
         hdr.addWidget(quit_btn)
@@ -4465,7 +4466,7 @@ class MainWindow(QMainWindow):
             field.setStyleSheet(f"""
                 QLineEdit {{
                     background: {C.PANEL2}; color: {C.WHITE};
-                    border: 1px solid {C.BORDER}; border-radius: 2px; padding: 4px 7px;
+                    border: 1px solid {C.BORDER}; border-radius: 12px; padding: 4px 10px;
                 }}
                 QLineEdit:focus {{ border-color: {C.PRI_DIM}; }}
             """)
@@ -4568,19 +4569,10 @@ class MainWindow(QMainWindow):
             threading.Thread(target=self.on_text_command, args=(msg,), daemon=True).start()
 
     def _build_footer(self) -> QWidget:
+        # Hidden footer — keeps layout wiring intact but shows nothing
         w = QWidget()
-        w.setFixedHeight(22)
-        w.setStyleSheet(f"background: {C.DARK}; border-top: 1px solid {C.BORDER};")
-        lay = QHBoxLayout(w); lay.setContentsMargins(14, 0, 14, 0)
-
-        def _fl(txt, color=C.TEXT_MED):
-            l = QLabel(txt); l.setFont(QFont("Segoe UI", 7))
-            l.setStyleSheet(f"color: {color}; background: transparent;")
-            return l
-
-        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
-        lay.addStretch()
-        lay.addWidget(_fl("By FatihMakes", C.PRI_DIM))
+        w.setFixedHeight(0)
+        w.hide()
         return w
 
     def _on_file_selected(self, path: str):
@@ -4722,7 +4714,8 @@ class MainWindow(QMainWindow):
             self._autostart_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #001a08; color: {C.GREEN};
-                    border: 1px solid {C.GREEN_D}; border-radius: 3px;
+                    border: 1px solid {C.GREEN_D}; border-radius: 13px;
+                    text-align: left; padding: 0 10px;
                 }}
                 QPushButton:hover {{ background: #002010; }}
             """)
@@ -4731,7 +4724,8 @@ class MainWindow(QMainWindow):
             self._autostart_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_DIM};
-                    border: 1px solid {C.BORDER}; border-radius: 3px;
+                    border: 1px solid {C.BORDER}; border-radius: 13px;
+                    text-align: left; padding: 0 10px;
                 }}
                 QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
             """)
@@ -4772,13 +4766,13 @@ class MainWindow(QMainWindow):
         st = self._wake_state()
         _on = f"""
             QPushButton {{ background: #001a08; color: {C.GREEN};
-                border: 1px solid {C.GREEN_D}; border-radius: 3px;
-                text-align: left; padding: 0 8px; }}
+                border: 1px solid {C.GREEN_D}; border-radius: 13px;
+                text-align: left; padding: 0 10px; }}
             QPushButton:hover {{ background: #002010; }}"""
         _off = f"""
             QPushButton {{ background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 3px;
-                text-align: left; padding: 0 8px; }}
+                border: 1px solid {C.BORDER}; border-radius: 13px;
+                text-align: left; padding: 0 10px; }}
             QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}"""
         self._wake_btn.setEnabled(True)
         if not st["ready"]:
@@ -4804,13 +4798,13 @@ class MainWindow(QMainWindow):
         from memory.config_manager import get_push_to_talk_enabled
         _on = f"""
             QPushButton {{ background: #001a08; color: {C.GREEN};
-                border: 1px solid {C.GREEN_D}; border-radius: 3px;
-                text-align: left; padding: 0 8px; }}
+                border: 1px solid {C.GREEN_D}; border-radius: 13px;
+                text-align: left; padding: 0 10px; }}
             QPushButton:hover {{ background: #002010; }}"""
         _off = f"""
             QPushButton {{ background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 3px;
-                text-align: left; padding: 0 8px; }}
+                border: 1px solid {C.BORDER}; border-radius: 13px;
+                text-align: left; padding: 0 10px; }}
             QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}"""
 
         ptt = get_push_to_talk_enabled()
@@ -4830,8 +4824,8 @@ class MainWindow(QMainWindow):
         # between two things, not a switch with a disabled side.
         style = f"""
             QPushButton {{ background: {C.PANEL2}; color: {C.PRI};
-                border: 1px solid {C.BORDER_A}; border-radius: 3px;
-                text-align: left; padding: 0 8px; }}
+                border: 1px solid {C.BORDER_A}; border-radius: 13px;
+                text-align: left; padding: 0 10px; }}
             QPushButton:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}"""
         self._hud_btn.setText("🧑  HUD: ANIMATED FACE" if face
                               else "◉  HUD: REACTOR CORE")
@@ -4968,8 +4962,8 @@ class MainWindow(QMainWindow):
             self._brief_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #001a08; color: {C.GREEN};
-                    border: 1px solid {C.GREEN_D}; border-radius: 3px;
-                    text-align: left; padding: 0 8px;
+                    border: 1px solid {C.GREEN_D}; border-radius: 13px;
+                    text-align: left; padding: 0 10px;
                 }}
                 QPushButton:hover {{ background: #002010; }}
             """)
@@ -4978,8 +4972,8 @@ class MainWindow(QMainWindow):
             self._brief_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_DIM};
-                    border: 1px solid {C.BORDER}; border-radius: 3px;
-                    text-align: left; padding: 0 8px;
+                    border: 1px solid {C.BORDER}; border-radius: 13px;
+                    text-align: left; padding: 0 10px;
                 }}
                 QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
             """)
@@ -5266,21 +5260,24 @@ class MainWindow(QMainWindow):
         self._circle_anim.start()
 
     def _start_pill_wave(self):
-        """Drive a repeating ripple-wave on the HUD while in pill/circle mode."""
-        self._pill_wave_phase = 0.0
+        """Drive a smooth multi-ring animation on the HUD while in circle/pill mode."""
+        self._pill_wave_phase  = 0.0
+        self._pill_ring_phase  = 0.0   # secondary ring counter
         self._pill_wave_tmr = QTimer(self)
         def _tick():
             if not getattr(self, '_is_circle_mode', False):
                 self._pill_wave_tmr.stop()
                 return
-            self._pill_wave_phase = (self._pill_wave_phase + 0.12) % (2 * 3.14159)
-            # Pulse amplitude into the HUD so the voice ring ripples
-            import math
-            amp = 0.35 + 0.35 * math.sin(self._pill_wave_phase)
+            self._pill_wave_phase  = (self._pill_wave_phase  + 0.09) % (2 * math.pi)
+            self._pill_ring_phase  = (self._pill_ring_phase  + 0.05) % (2 * math.pi)
+            # Oscillating amplitude — two sine waves for richer motion
+            amp = 0.40 + 0.30 * math.sin(self._pill_wave_phase) \
+                       + 0.15 * math.sin(self._pill_ring_phase * 1.7)
+            amp = max(0.0, min(1.0, amp))
             self.hud._live_amp = amp
             self.hud.update()
         self._pill_wave_tmr.timeout.connect(_tick)
-        self._pill_wave_tmr.start(30)  # ~33 fps wave
+        self._pill_wave_tmr.start(25)  # ~40 fps smooth animation
 
     def restore_from_circle(self):
         """Smoothly restore window from circular pill to full layout."""

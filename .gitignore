@@ -52,3 +52,8 @@ desktop.ini
 logs/
 downloads/
 screenshots/
+
+# ── Spotify (tokens are embedded in config/api_keys.json which is ignored) ────
+# Extra safety — if a standalone token file is ever added it won't slip through.
+spotify_tokens.json
+.spotify/
