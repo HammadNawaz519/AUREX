@@ -4427,7 +4427,7 @@ class MainWindow(QMainWindow):
         )
         first_show = not self._content_panel.isVisible()
         self._content_panel.show()
-        if first_show:
+        if first_show and hasattr(self, '_center_split'):
             total = self._center_split.height()
             self._center_split.setSizes([max(total - 220, 120), 220])
 
@@ -4512,7 +4512,7 @@ class MainWindow(QMainWindow):
             self._content_display.textCursor().MoveOperation.Start)
         first_show = not self._content_panel.isVisible()
         self._content_panel.show()
-        if first_show:
+        if first_show and hasattr(self, '_center_split'):
             total = self._center_split.height()
             self._center_split.setSizes([max(total - 260, 120), 260, 0])
 
@@ -4643,7 +4643,7 @@ class MainWindow(QMainWindow):
         self.hud.glance(0.0, -0.85, hold=1.3)
         first_show = not self._quiz_panel.isVisible()
         self._quiz_panel.show()
-        if first_show:
+        if first_show and hasattr(self, '_center_split'):
             total = self._center_split.height()
             self._center_split.setSizes([max(total - 250, 120), 0, 250])
         self._quiz_render()

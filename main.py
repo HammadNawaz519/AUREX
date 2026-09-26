@@ -864,11 +864,7 @@ class JarvisLive:
         if value:
             self._tail_until = 0.0
         else:
-            # Hold the guard open across the device's own output latency plus a
-            # margin for the room. The microphone is NOT muted during it — the
-            # guard still lets a genuine reply through, so answering instantly
-            # still works. Only our own echo is dropped.
-            self._tail_until = time.monotonic() + self._out_latency + _TAIL_MARGIN
+            self._tail_until = time.monotonic() + self._out_latency + 0.45
         if not value:
             # The echo history is deliberately NOT cleared here: the tail above
             # still needs it to recognise our own voice. It is dropped when the
@@ -1322,42 +1318,12 @@ class JarvisLive:
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
 
-            # ── Barge-in ─────────────────────────────────────────────────────
-            # While JARVIS talks the mic is not streamed, but it is still worth
-            # listening to locally: if the user starts speaking, cut the answer
-            # short the way a person would stop when interrupted.
-            #
-            # The whole difficulty is echo — on speakers the mic hears JARVIS.
-            # So the test is not "is the mic loud" but "is the mic louder than
-            # the echo of what we are playing right now", sustained long enough
-            # that a cough or a keystroke cannot trigger it.
-            if jarvis_speaking:
-                # Nothing is streamed while JARVIS talks.
-                #
-                # Interrupting by voice used to live here: `EchoGuard` can pick a
-                # user out from under our own echo, and `core/echo.py` still does
-                # that for the tail below. Re-enabling is small — classify each
-                # block here and call interrupt() after `required_blocks` of
-                # agreement — but it depends on the listener's room, so it stays
-                # out until it can be tried on real hardware.
+            # While AUREX is actively speaking, has audio buffered in queue,
+            # or the room echo tail is settling, do NOT stream microphone to Gemini
+            # so that Gemini never interrupts itself or stops after the first word.
+            queue_has_audio = (self.audio_in_queue is not None and not self.audio_in_queue.empty())
+            if jarvis_speaking or queue_has_audio or self._tail_active():
                 return
-
-            # ── Echo tail ────────────────────────────────────────────────────
-            # The speaking flag has dropped but the speakers have not finished.
-            # Sending this to the model is how an assistant hears itself, decides
-            # it was addressed, and answers its own last sentence. The microphone
-            # stays OPEN — the guard only drops blocks that are our own voice, so
-            # replying the instant it stops still works.
-            if self._tail_active():
-                try:
-                    if not self._echo.is_user_speech(
-                            indata, SEND_SAMPLE_RATE, _pcm_level(indata)):
-                        return
-                    self._tail_until = 0.0      # a real voice ends the tail early
-                except Exception:
-                    return
-            elif self._echo._hist:
-                self._echo.reset()
 
             # ── Push-to-talk ─────────────────────────────────────────────────
             # When it is on the microphone is closed by default and the chord
@@ -1490,6 +1456,7 @@ class JarvisLive:
                         if self._interrupted:
                             pass  # discard: interrupted
                         else:
+                            self.set_speaking(True)
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms

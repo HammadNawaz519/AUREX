@@ -378,19 +378,40 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
     """Create a file with content at exact destination, auto-creating parent folders."""
     try:
         global _CURRENT_DIR
-        raw_path = (path or "").strip()
-        raw_name = (name or "").strip()
+        raw_path = str(path or "").strip().strip('"').strip("'")
+        raw_name = str(name or "").strip().strip('"').strip("'")
 
-        if not raw_name:
-            target = _resolve_path(raw_path)
-            if target.is_dir() or raw_path.endswith(("/", "\\")):
-                target = target / "new_file.txt"
-        else:
-            base = _resolve_path(raw_path) if raw_path else _CURRENT_DIR
-            if base.is_file() or (base.suffix and base.name.lower() == raw_name.lower()):
-                target = base
+        # If name looks like a full path (e.g. "D:/intro.txt", "D:\\intro.txt", "sub/intro.txt")
+        if raw_name and (":" in raw_name or "/" in raw_name or "\\" in raw_name):
+            if not raw_path:
+                raw_path = raw_name
+                raw_name = ""
+            elif raw_path.lower() in ("desktop", "current", "here", "."):
+                raw_path = raw_name
+                raw_name = ""
+
+        # Determine target file path
+        if not raw_path and not raw_name:
+            target = _CURRENT_DIR / "new_file.txt"
+        elif raw_path and not raw_name:
+            resolved = _resolve_path(raw_path)
+            if resolved.suffix:
+                # It's a full file path (e.g. D:/test.txt)
+                target = resolved
             else:
+                # It's a directory
+                target = resolved / "new_file.txt"
+        elif not raw_path and raw_name:
+            target = _CURRENT_DIR / raw_name
+        else:
+            # Both raw_path and raw_name provided
+            base = _resolve_path(raw_path)
+            if base.suffix and base.name.lower() == raw_name.lower():
+                target = base
+            elif base.is_dir() or not base.suffix:
                 target = base / raw_name
+            else:
+                target = base.parent / raw_name
 
         if not _is_safe_path(target):
             return f"Access denied: {target}"
@@ -410,8 +431,10 @@ def create_file(path: str, name: str = "", content: str = "") -> str:
             return f"Error: File was not created at {target}"
 
         _CURRENT_DIR = target.parent
-        push_undo(f"created {target.name}",
-                  _undo_write(target, previous) if existed else _undo_create(target))
+        push_undo(
+            f"created {target.name}",
+            _undo_write(target, previous) if existed else _undo_create(target),
+        )
         return f"File created successfully: {target.resolve()} ({len(content)} characters written)."
     except Exception as e:
         return f"Could not create file: {e}"
@@ -912,28 +935,47 @@ def file_controller(
 ) -> str:
     params = parameters or {}
     action = params.get("action", "").lower().strip()
-    path   = params.get("path", "desktop")
-    name   = params.get("name", "")
+
+    # Extract location from all possible parameter aliases Gemini might send
+    raw_path = (
+        params.get("path")
+        or params.get("file_path")
+        or params.get("filepath")
+        or params.get("target")
+        or params.get("folder")
+        or params.get("directory")
+        or params.get("location")
+        or ""
+    )
+    raw_name = (
+        params.get("name")
+        or params.get("filename")
+        or params.get("file_name")
+        or ""
+    )
+
+    path = raw_path
+    name = raw_name
 
     if player:
         player.write_log(f"[file] {action} {name or path}")
 
     try:
         if action in ("open_folder", "navigate", "go_to", "open_dir", "cd"):
-            return open_folder(path)
+            return open_folder(path or _CURRENT_DIR)
 
         elif action in ("open_file", "open", "launch", "view"):
             # Check if path is actually a folder
-            p_res = _resolve_path(path)
+            p_res = _resolve_path(path) if path else _CURRENT_DIR
             if p_res.is_dir() and not name:
-                return open_folder(path)
+                return open_folder(str(p_res))
             return open_file(path, name=name)
 
         elif action in ("list", "ls", "dir"):
-            return list_files(path)
+            return list_files(path or _CURRENT_DIR)
 
         elif action in ("create_file", "create", "write_file", "make_file", "new_file"):
-            return create_file(path, name=name, content=params.get("content", ""))
+            return create_file(path=path, name=name, content=params.get("content", ""))
 
         elif action in ("create_folder", "make_folder", "mkdir"):
             return create_folder(path, name=name)
