@@ -301,7 +301,7 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are JARVIS, Tony Stark's AI assistant. "
+            "You are AUREX, an advanced autonomous AI assistant created by Hammad Nawaz. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
             "Never simulate or guess results — always call the appropriate tool."
         )
@@ -439,7 +439,7 @@ TOOL_DECLARATIONS = [
                     )
                 },
                 "key":   {"type": "STRING", "description": "Short snake_case key (e.g. name, favorite_food, sister_name)"},
-                "value": {"type": "STRING", "description": "Concise value in English (e.g. Fatih, pizza, older sister)"},
+                "value": {"type": "STRING", "description": "Concise value in English (e.g. Hammad, pizza, older sister)"},
             },
             "required": ["category", "key", "value"]
         }
@@ -653,7 +653,7 @@ class JarvisLive:
             try:
                 self.set_push_to_talk(True)
             except Exception as e:
-                print(f"[JARVIS] ⚠ Push-to-talk unavailable: {e}")
+                print(f"[AUREX] ⚠ Push-to-talk unavailable: {e}")
         # UI control surface for the Wake Word settings section.
         self.ui.wake_is_ready    = wake_is_ready          # () -> bool
         self.ui.wake_get_state   = self._wake_state       # () -> dict
@@ -933,7 +933,7 @@ class JarvisLive:
                 except Exception:
                     break
             if drained:
-                print(f"[JARVIS] ✋ Interrupted — {drained} audio chunks discarded")
+                print(f"[AUREX] ✋ Interrupted — {drained} audio chunks discarded")
         self.set_speaking(False)
         # The words we were about to mouth are never going to be spoken now.
         self._visemes.reset()
@@ -1123,7 +1123,7 @@ class JarvisLive:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[JARVIS] 🔧 {name}  {args}")
+        print(f"[AUREX] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
 
@@ -1270,7 +1270,7 @@ class JarvisLive:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        print(f"[AUREX] 📤 {name} → {str(result)[:80]}")
 
         # A tool that declared itself NON_BLOCKING also says when its answer may
         # re-enter the conversation. Without this the model finishes whatever it
@@ -1303,7 +1303,7 @@ class JarvisLive:
             )
 
     async def _listen_audio(self):
-        print("[JARVIS] 🎤 Mic started")
+        print("[AUREX] 🎤 Mic started")
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
@@ -1398,7 +1398,7 @@ class JarvisLive:
             _mic_name = get_input_device()
             _mic_dev  = audio_devices.resolve(_mic_name, "input")
             if _mic_dev is not None:
-                print(f"[JARVIS] 🎤 Input device: {_mic_name}")
+                print(f"[AUREX] 🎤 Input device: {_mic_name}")
             try:
                 _mic_stream = _open_mic(_mic_dev)
             except Exception as _e:
@@ -1408,18 +1408,18 @@ class JarvisLive:
                 # mean the assistant cannot hear at all.
                 if _mic_dev is None:
                     raise
-                print(f"[JARVIS] ⚠️  Mic '{_mic_name}' failed: {_e} — using default")
+                print(f"[AUREX] ⚠️  Mic '{_mic_name}' failed: {_e} — using default")
                 self.ui.write_log(
                     f"SYS: Microphone '{_mic_name}' unavailable — using system default."
                 )
                 _mic_stream = _open_mic(None)
 
             with _mic_stream:
-                print("[JARVIS] 🎤 Mic stream open")
+                print("[AUREX] 🎤 Mic stream open")
                 while True:
                     await asyncio.sleep(0.1)
         except Exception as e:
-            print(f"[JARVIS] ❌ Mic: {e}")
+            print(f"[AUREX] ❌ Mic: {e}")
             raise
 
     async def _flush_pending_vision(self) -> bool:
@@ -1466,7 +1466,7 @@ class JarvisLive:
         return True
 
     async def _receive_audio(self):
-        print("[JARVIS] 👂 Recv started")
+        print("[AUREX] 👂 Recv started")
         out_buf, in_buf = [], []
 
         try:
@@ -1483,7 +1483,7 @@ class JarvisLive:
                     if _sru is not None:
                         if getattr(_sru, "resumable", False) and getattr(_sru, "new_handle", None):
                             if self._resume_handle is None:
-                                print("[JARVIS] 🔗 Session resumption armed")
+                                print("[AUREX] 🔗 Session resumption armed")
                             self._resume_handle = _sru.new_handle
 
                     if response.data:
@@ -1524,6 +1524,13 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                try:
+                                    from ui import get_active_window
+                                    win = get_active_window()
+                                    if win and hasattr(win, '_check_circle_commands'):
+                                        win._check_circle_commands(txt)
+                                except Exception:
+                                    pass
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -1582,7 +1589,7 @@ class JarvisLive:
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
-                            print(f"[JARVIS] 📞 {fc.name}")
+                            print(f"[AUREX] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(
@@ -1590,17 +1597,17 @@ class JarvisLive:
                         )
                         await self._flush_pending_vision()
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
+            print(f"[AUREX] ❌ Recv: {e}")
             traceback.print_exc()
             raise
 
     async def _play_audio(self):
-        print("[JARVIS] 🔊 Play started")
+        print("[AUREX] 🔊 Play started")
 
         _spk_name = get_output_device()
         _spk_dev  = audio_devices.resolve(_spk_name, "output")
         if _spk_dev is not None:
-            print(f"[JARVIS] 🔊 Output device: {_spk_name}")
+            print(f"[AUREX] 🔊 Output device: {_spk_name}")
 
         def _open_spk(dev):
             st = sd.RawOutputStream(
@@ -1621,7 +1628,7 @@ class JarvisLive:
             # cost the user their voice. Fall back to the default and say so.
             if _spk_dev is None:
                 raise
-            print(f"[JARVIS] ⚠️  Output device '{_spk_name}' failed: {_e} — using default")
+            print(f"[AUREX] ⚠️  Output device '{_spk_name}' failed: {_e} — using default")
             self.ui.write_log(f"SYS: Speaker '{_spk_name}' unavailable — using system default.")
             stream = _open_spk(None)
 
@@ -1633,7 +1640,7 @@ class JarvisLive:
             lat = float(getattr(stream, "latency", 0.0) or 0.0)
             if 0.0 < lat < 1.0:
                 self._out_latency = lat
-            print(f"[JARVIS] 🔊 Output latency {self._out_latency*1000:.0f} ms "
+            print(f"[AUREX] 🔊 Output latency {self._out_latency*1000:.0f} ms "
                   f"→ echo tail {(self._out_latency + _TAIL_MARGIN)*1000:.0f} ms")
         except Exception:
             pass
@@ -1722,7 +1729,7 @@ class JarvisLive:
                 except (RuntimeError, asyncio.CancelledError):
                     break   # executor shutting down — exit cleanly
         except Exception as e:
-            print(f"[JARVIS] ❌ Play: {e}")
+            print(f"[AUREX] ❌ Play: {e}")
             raise
         finally:
             self.set_speaking(False)
@@ -1794,7 +1801,7 @@ class JarvisLive:
             turns={"role": "user", "parts": [{"text": p1}]},
             turn_complete=True,
         )
-        print("[JARVIS] Briefing phase 1 (greeting) sent.")
+        print("[AUREX] Briefing phase 1 (greeting) sent.")
 
         # ── Phase 2: fire as soon as Phase 1 audio is done ───────────────────
         async def _deliver_news():
@@ -1857,10 +1864,10 @@ class JarvisLive:
                     turns={"role": "user", "parts": [{"text": p2}]},
                     turn_complete=True,
                 )
-                print("[JARVIS] Briefing phase 2 (news) sent.")
+                print("[AUREX] Briefing phase 2 (news) sent.")
             except Exception as e:
                 print(f"[Briefing] Phase 2 error: {e}")
-                print(f"[JARVIS] Briefing phase 2 failed: {e}")
+                print(f"[AUREX] Briefing phase 2 failed: {e}")
                 self.ui.write_log("SYS: Could not fetch the news for the briefing.")
 
         asyncio.create_task(_deliver_news())
@@ -1944,7 +1951,7 @@ class JarvisLive:
                                 turns={"role": "user", "parts": [{"text": msg}]},
                                 turn_complete=True,
                             )
-                            print("[JARVIS] Monitor alert sent.")
+                            print("[AUREX] Monitor alert sent.")
                             await asyncio.sleep(6)   # gap between consecutive alerts
                     except Exception as e:
                         print(f"[Monitor] ⚠️ Background check error: {e}")
@@ -1987,7 +1994,7 @@ class JarvisLive:
                     turns={"role": "user", "parts": [{"text": prompt}]},
                     turn_complete=True,
                 )
-                print("[JARVIS] Proactive check-in.")
+                print("[AUREX] Proactive check-in.")
             except Exception as e:
                 print(f"[Proactive] ⚠️ {e}")
 
@@ -2092,7 +2099,7 @@ class JarvisLive:
 
         while True:
             try:
-                print("[JARVIS] Connecting...")
+                print("[AUREX] Connecting...")
                 self.ui.set_state("THINKING")
                 _resumed_with = self._resume_handle is not None
                 config = self._build_config()
@@ -2122,7 +2129,7 @@ class JarvisLive:
                     self._vision_last_time     = 0.0
                     self._interrupted          = False
 
-                    print("[JARVIS] Connected.")
+                    print("[AUREX] Connected.")
                     if _resumed_with:
                         # Say it plainly: the difference between "it reconnected"
                         # and "it reconnected and still knows what we were doing"
@@ -2177,7 +2184,7 @@ class JarvisLive:
                 # Voluntary reconnect (voice change) — not an error. Rebuild the
                 # session immediately with no backoff and no scary logs.
                 if _is_reconnect_signal(e):
-                    print("[JARVIS] Voluntary reconnect requested.")
+                    print("[AUREX] Voluntary reconnect requested.")
                     if not _keep_context_of(e):
                         # A deliberate clean slate (voice change) — drop the
                         # handle so the next connect really does start empty.
@@ -2197,14 +2204,14 @@ class JarvisLive:
                     or "INVALID_ARGUMENT" in str(e)
                     or "NOT_FOUND" in str(e)
                 ):
-                    print("[JARVIS] 🔗 Resumption handle rejected — starting a fresh session")
+                    print("[AUREX] 🔗 Resumption handle rejected — starting a fresh session")
                     self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")
                     self._resume_handle = None
                     self._conn_backoff = 0
                     continue
 
                 err_str = str(e)
-                print(f"[JARVIS] Error ({type(e).__name__}): {e}")
+                print(f"[AUREX] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 
                 # Turn-taking / media / thinking knobs rejected by the server
@@ -2220,7 +2227,7 @@ class JarvisLive:
                     or "thinking" in err_str.lower()
                 ):
                     self._tuned_live = False
-                    print("[JARVIS] Live tuning rejected — reconnecting without it.")
+                    print("[AUREX] Live tuning rejected — reconnecting without it.")
                     continue
 
                 # Proactive audio rejected by the server (preview API drift) —
@@ -2244,7 +2251,7 @@ class JarvisLive:
                     self.ui.prompt_reconfig()
                     while not self.ui._win._ready:
                         await asyncio.sleep(1)
-                    print("[JARVIS] New API key saved — reconnecting...")
+                    print("[AUREX] New API key saved — reconnecting...")
                     _conn_backoff = 3
                     continue
 
@@ -2275,7 +2282,7 @@ class JarvisLive:
                 await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
 
             delay = getattr(self, "_conn_backoff", 3)
-            print(f"[JARVIS] Reconnecting in {delay}s...")
+            print(f"[AUREX] Reconnecting in {delay}s...")
             await asyncio.sleep(delay)
 
 def main():
