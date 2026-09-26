@@ -823,12 +823,91 @@ class HudCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         is_circle = getattr(self.window(), '_is_circle_mode', False)
-        p.fillRect(self.rect(), qcol("#030910"))
-
         W, H = self.width(), self.height()
-        cx, cy = W / 2, H / 2
+        cx, cy = W / 2.0, H / 2.0
         fw = min(W, H)
 
+        if is_circle:
+            # Pill Mode: clean dark background with ONLY wave animations!
+            # Nothing inside except dynamic glowing audio waves / ripples
+            p.fillRect(self.rect(), qcol("#060B12"))
+
+            # Dynamic color reactive to assistant state
+            if self.muted:
+                accent_col = QColor(239, 68, 68)
+            elif self.speaking:
+                accent_col = QColor(0, 240, 255)
+            elif self.state == "LISTENING":
+                accent_col = QColor(0, 229, 160)
+            elif self.state in ("THINKING", "PROCESSING"):
+                accent_col = QColor(168, 85, 247)
+            else:
+                accent_col = QColor(0, 200, 255)
+
+            # Central ambient radial glow
+            ambient = QRadialGradient(cx, cy, fw * 0.5)
+            ambient.setColorAt(0.0, QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 42))
+            ambient.setColorAt(1.0, QColor(6, 11, 18, 0))
+            p.setBrush(QBrush(ambient))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(cx, cy), fw * 0.48, fw * 0.48)
+
+            phase = getattr(self.window(), '_pill_wave_phase', self._core_phase * 2.5)
+            amp = getattr(self, '_live_amp', 0.2)
+
+            # 3 Expanding concentric ripple wave rings
+            for ring_idx in range(3):
+                ring_phase = (phase + ring_idx * (math.pi * 2.0 / 3.0)) % (math.pi * 2.0)
+                progress = ring_phase / (math.pi * 2.0)
+                r_ring = (fw * 0.14) + progress * (fw * 0.32) + (amp * fw * 0.08)
+                alpha = int(max(0, min(220, (1.0 - progress) * (140 + amp * 100))))
+                pen_col = QColor(accent_col.red(), accent_col.green(), accent_col.blue(), alpha)
+                pen = QPen(pen_col, 1.8 + (1.0 - progress) * 1.5)
+                p.setPen(pen)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawEllipse(QPointF(cx, cy), r_ring, r_ring)
+
+            # Dynamic fluid voice soundwave across center
+            wave_path = QPainterPath()
+            points = 36
+            wave_w = fw * 0.72
+            x_start = cx - wave_w / 2.0
+            x_step = wave_w / points
+            base_amp = fw * (0.06 + amp * 0.16)
+
+            for pt in range(points + 1):
+                px = x_start + pt * x_step
+                env = math.sin((pt / points) * math.pi)
+                py = cy + env * base_amp * (
+                    0.7 * math.sin(phase * 1.8 + pt * 0.35) +
+                    0.3 * math.sin(phase * 3.1 - pt * 0.25)
+                )
+                if pt == 0:
+                    wave_path.moveTo(px, py)
+                else:
+                    wave_path.lineTo(px, py)
+
+            wave_pen = QPen(QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 230), 2.2)
+            p.setPen(wave_pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(wave_path)
+
+            # Central glowing core dot
+            core_r = max(3.5, fw * (0.045 + amp * 0.035))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(accent_col))
+            p.drawEllipse(QPointF(cx, cy), core_r, core_r)
+
+            # Outer subtle pill border ring
+            border_pen = QPen(QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 90), 1.5)
+            p.setPen(border_pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), fw * 0.48, fw * 0.48)
+
+            p.end()
+            return
+
+        p.fillRect(self.rect(), qcol("#030910"))
         # grid dots — blitted from a cached layer
         _gkey = (W, H, C.PRI_GHO)
         if self._grid_cache is None or self._grid_key != _gkey:
@@ -836,19 +915,13 @@ class HudCanvas(QWidget):
             self._grid_key   = _gkey
         p.drawPixmap(0, 0, self._grid_cache)
 
-        if is_circle:
-            _head_cy = H * 0.50
-            _r_head = min(W, H) * 0.42
-            _sy_status = -100.0
-        else:
-            _sy_status = cy + fw * 0.40
-            if self._avatar is not None and self.hud_style == "face":
-                _band_t = 12.0
-                _band_h = max(60.0, _sy_status - 12.0 - _band_t)
-                _r_head = min(fw * 0.355, _band_h / (self._avatar.SPAN + 0.08))
-                _head_cy = _band_t + (_band_h - self._avatar.SPAN * _r_head) / 2.0 + _r_head
-
+        _sy_status = cy + fw * 0.40
         if self._avatar is not None and self.hud_style == "face":
+            _band_t = 12.0
+            _band_h = max(60.0, _sy_status - 12.0 - _band_t)
+            _r_head = min(fw * 0.355, _band_h / (self._avatar.SPAN + 0.08))
+            _head_cy = _band_t + (_band_h - self._avatar.SPAN * _r_head) / 2.0 + _r_head
+
             if self.muted:
                 _main = _acc = qcol(C.MUTED_C)
             else:
@@ -862,14 +935,14 @@ class HudCanvas(QWidget):
                 else:
                     _acc = qcol(C.PRI)
             self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol("#030910"))
-        elif not is_circle:
+        else:
             _band_t = 12.0
             _band_h = max(60.0, _sy_status - 12.0 - _band_t)
             _r = min(W * 0.46, _band_h / 2.0)
             self._paint_core(p, cx, _band_t + _band_h / 2.0, _r, W, _band_h)
 
         # status text
-        if is_circle or _sy_status <= 0:
+        if _sy_status <= 0:
             p.end()
             return
         sy = _sy_status
@@ -1597,7 +1670,7 @@ class CustomizeOverlay(QWidget):
     """Floating overlay — change assistant name, user name, UI colour and voice."""
 
     saved = pyqtSignal(str, str, str, str)   # assistant_name, user_name, ui_color, voice
-    _OW, _OH = 400, 588
+    _OW, _OH = 314, 334
 
     def __init__(self, assistant_name="JARVIS", user_name="",
                  ui_color=DEFAULT_UI_COLOR, voice="", parent=None):
@@ -1607,14 +1680,17 @@ class CustomizeOverlay(QWidget):
             CustomizeOverlay {
                 background: #FFFFFF;
                 border: 1px solid #CBD5E1;
-                border-radius: 18px;
+                border-radius: 16px;
             }
         """)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 18, 24, 18)
-        lay.setSpacing(8)
+        self.setFixedWidth(self._OW)
+        self.setFixedHeight(self._OH)
 
-        def _lbl(txt, fs=9, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(6)
+
+        def _lbl(txt, fs=8, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
             w = QLabel(txt); w.setAlignment(align)
             w.setFont(QFont("Segoe UI", fs,
                             QFont.Weight.Bold if bold else QFont.Weight.Normal))
@@ -1622,70 +1698,97 @@ class CustomizeOverlay(QWidget):
             return w
 
         _fs = (f"QLineEdit {{ background: #F8FAFC; color: #0F172A; "
-               f"border: 1px solid #CBD5E1; border-radius: 14px; padding: 4px 10px; }}"
+               f"border: 1px solid #CBD5E1; border-radius: 12px; padding: 3px 8px; }}"
                f"QLineEdit:focus {{ border: 1px solid {C.PRI}; background: #FFFFFF; }}")
 
-        lay.addWidget(_lbl("⚙  CUSTOMISE ASSISTANT", 12, True, color="#0F172A"))
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #E2E8F0; margin: 2px 0;")
-        lay.addWidget(sep)
+        hdr_row = QHBoxLayout()
+        hdr_row.addWidget(_lbl("⚙  CUSTOMISE ASSISTANT", 10, True, color="#0F172A", align=Qt.AlignmentFlag.AlignLeft), 1)
+        close_icon = QPushButton("✕")
+        close_icon.setFixedSize(20, 20)
+        close_icon.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        close_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_icon.setStyleSheet("QPushButton { background: #F1F5F9; color: #64748B; border: none; border-radius: 10px; } QPushButton:hover { background: #E2E8F0; color: #0F172A; }")
+        close_icon.clicked.connect(self._cancel)
+        hdr_row.addWidget(close_icon)
+        root.addLayout(hdr_row)
 
-        lay.addWidget(_lbl("ASSISTANT NAME", 8, color="#64748B",
-                            align=Qt.AlignmentFlag.AlignLeft))
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #E2E8F0; margin: 1px 0;")
+        root.addWidget(sep)
+
+        # Scrollable form body
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { background: #F1F5F9; width: 4px; border-radius: 2px; }
+            QScrollBar::handle:vertical { background: #CBD5E1; border-radius: 2px; min-height: 16px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(0, 2, 4, 2)
+        lay.setSpacing(5)
+
+        lay.addWidget(_lbl("ASSISTANT NAME", 7, color="#64748B", align=Qt.AlignmentFlag.AlignLeft))
         self._name_input = QLineEdit(assistant_name)
-        self._name_input.setFont(QFont("Segoe UI", 10))
-        self._name_input.setFixedHeight(32)
+        self._name_input.setFont(QFont("Segoe UI", 9))
+        self._name_input.setFixedHeight(28)
         self._name_input.setStyleSheet(_fs)
         lay.addWidget(self._name_input)
 
-        lay.addSpacing(4)
-        lay.addWidget(_lbl("YOUR NAME  (leave blank for default sir / efendim)", 8,
-                            color="#64748B", align=Qt.AlignmentFlag.AlignLeft))
+        lay.addWidget(_lbl("YOUR NAME (leave blank for auto)", 7, color="#64748B", align=Qt.AlignmentFlag.AlignLeft))
         self._user_input = QLineEdit(user_name)
-        self._user_input.setPlaceholderText("e.g.  Tony   (leave blank for auto)")
-        self._user_input.setFont(QFont("Segoe UI", 10))
-        self._user_input.setFixedHeight(32)
+        self._user_input.setPlaceholderText("e.g. Tony")
+        self._user_input.setFont(QFont("Segoe UI", 9))
+        self._user_input.setFixedHeight(28)
         self._user_input.setStyleSheet(_fs)
         lay.addWidget(self._user_input)
 
-        # ── Assistant voice — Gemini prebuilt voices ─────────────────────────
-        # Names are language-neutral proper nouns, so the row reads the same in
-        # every locale. Selecting one and applying rebuilds the Live session.
         from memory.config_manager import AVAILABLE_VOICES, DEFAULT_VOICE
-        lay.addSpacing(4)
-        lay.addWidget(_lbl("ASSISTANT VOICE", 8, color="#64748B",
-                            align=Qt.AlignmentFlag.AlignLeft))
+        lay.addWidget(_lbl("ASSISTANT VOICE", 7, color="#64748B", align=Qt.AlignmentFlag.AlignLeft))
         self._sel_voice   = (voice or DEFAULT_VOICE)
         if self._sel_voice not in AVAILABLE_VOICES:
             self._sel_voice = DEFAULT_VOICE
         self._voice_btns: dict[str, QPushButton] = {}
-        voice_row = QHBoxLayout(); voice_row.setSpacing(4)
-        for _v in AVAILABLE_VOICES:
+        
+        # 2 rows for voice pills to prevent horizontal clipping
+        v_grid = QVBoxLayout()
+        v_grid.setSpacing(3)
+        row1 = QHBoxLayout(); row1.setSpacing(4)
+        row2 = QHBoxLayout(); row2.setSpacing(4)
+        for i, _v in enumerate(AVAILABLE_VOICES):
             b = QPushButton(_v)
             b.setCheckable(True)
-            b.setFixedHeight(28)
-            b.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            b.setFixedHeight(24)
+            b.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False, name=_v: self._on_voice_pick(name))
             self._voice_btns[_v] = b
-            voice_row.addWidget(b)
-        lay.addLayout(voice_row)
+            if i < 3:
+                row1.addWidget(b)
+            else:
+                row2.addWidget(b)
+        v_grid.addLayout(row1)
+        v_grid.addLayout(row2)
+        lay.addLayout(v_grid)
         self._refresh_voice_btns()
 
-        # ── UI colour — colour wheel ─────────────────────────────────────────
-        lay.addSpacing(4)
         clr_hdr = QHBoxLayout()
-        clr_hdr.addWidget(_lbl("UI COLOUR  —  drag the handle", 8,
-                               color="#64748B", align=Qt.AlignmentFlag.AlignLeft))
+        clr_hdr.addWidget(_lbl("UI COLOUR", 7, color="#64748B", align=Qt.AlignmentFlag.AlignLeft))
         clr_hdr.addStretch()
         df_btn = QPushButton("DEFAULT")
-        df_btn.setFixedSize(64, 20)
+        df_btn.setFixedSize(56, 18)
         df_btn.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
         df_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         df_btn.setStyleSheet("""
             QPushButton {
                 background: #F1F5F9; color: #475569;
-                border: 1px solid #CBD5E1; border-radius: 10px;
+                border: 1px solid #CBD5E1; border-radius: 9px;
             }
             QPushButton:hover { background: #E2E8F0; color: #0F172A; }
         """)
@@ -1695,7 +1798,7 @@ class CustomizeOverlay(QWidget):
 
         self._initial_color = (ui_color or DEFAULT_UI_COLOR).strip().lower()
         self._sel_color     = self._initial_color
-        self.on_preview     = None   # callable(hex) — live preview; MainWindow wires it
+        self.on_preview     = None
 
         self._wheel = HueWheel(self._sel_color)
         wheel_row = QHBoxLayout()
@@ -1705,24 +1808,25 @@ class CustomizeOverlay(QWidget):
         self._wheel.hue_committed.connect(self._on_wheel_commit)
 
         self._hex_input = QLineEdit(self._sel_color)
-        self._hex_input.setPlaceholderText("#00d4ff   (custom hex colour)")
-        self._hex_input.setFont(QFont("Segoe UI", 10))
-        self._hex_input.setFixedHeight(28)
+        self._hex_input.setPlaceholderText("#00d4ff")
+        self._hex_input.setFont(QFont("Segoe UI", 9))
+        self._hex_input.setFixedHeight(26)
         self._hex_input.setStyleSheet(_fs)
         self._hex_input.textEdited.connect(self._on_hex_edited)
         lay.addWidget(self._hex_input)
 
-        lay.addSpacing(6)
-        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+        scroll.setWidget(body)
+        root.addWidget(scroll, 1)
 
-        save_btn = QPushButton("▸  APPLY CHANGES")
-        save_btn.setFixedHeight(34)
-        save_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        btn_row = QHBoxLayout(); btn_row.setSpacing(6)
+        save_btn = QPushButton("▸ APPLY")
+        save_btn.setFixedHeight(30)
+        save_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {C.PRI}; color: #FFFFFF;
-                border: none; border-radius: 14px; font-weight: bold;
+                border: none; border-radius: 12px; font-weight: bold;
             }}
             QPushButton:hover {{ background: #0369A1; }}
         """)
@@ -1730,19 +1834,19 @@ class CustomizeOverlay(QWidget):
         btn_row.addWidget(save_btn)
 
         cancel_btn = QPushButton("CANCEL")
-        cancel_btn.setFixedHeight(34)
-        cancel_btn.setFont(QFont("Segoe UI", 9))
+        cancel_btn.setFixedHeight(30)
+        cancel_btn.setFont(QFont("Segoe UI", 8))
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.setStyleSheet("""
             QPushButton {
                 background: #F1F5F9; color: #334155;
-                border: 1px solid #CBD5E1; border-radius: 14px;
+                border: 1px solid #CBD5E1; border-radius: 12px;
             }
             QPushButton:hover { background: #E2E8F0; color: #0F172A; }
         """)
         cancel_btn.clicked.connect(self._cancel)
         btn_row.addWidget(cancel_btn)
-        lay.addLayout(btn_row)
+        root.addLayout(btn_row)
 
     # ── voice selection ──────────────────────────────────────────────────────
     def _on_voice_pick(self, name: str):
@@ -1814,7 +1918,7 @@ class CustomizeOverlay(QWidget):
 class PluginManagerOverlay(QWidget):
     """Floating overlay — lists discovered plugins with per-plugin ON/OFF toggles."""
 
-    _OW = 420
+    _OW, _OH = 314, 334
 
     def __init__(self, plugins: list[dict], parent=None):
         super().__init__(parent)
@@ -1823,47 +1927,78 @@ class PluginManagerOverlay(QWidget):
             PluginManagerOverlay {
                 background: #FFFFFF;
                 border: 1px solid #CBD5E1;
-                border-radius: 18px;
+                border-radius: 16px;
             }
         """)
         self.setFixedWidth(self._OW)
+        self.setFixedHeight(self._OH)
 
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 16, 20, 16)
-        lay.setSpacing(6)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(6)
 
+        hdr_row = QHBoxLayout()
         hdr = QLabel("🧩  PLUGIN MANAGER")
-        hdr.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         hdr.setStyleSheet("color: #0F172A; background: transparent;")
-        lay.addWidget(hdr)
+        hdr_row.addWidget(hdr, 1)
+
+        close_icon = QPushButton("✕")
+        close_icon.setFixedSize(20, 20)
+        close_icon.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        close_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_icon.setStyleSheet("QPushButton { background: #F1F5F9; color: #64748B; border: none; border-radius: 10px; } QPushButton:hover { background: #E2E8F0; color: #0F172A; }")
+        close_icon.clicked.connect(self.hide)
+        hdr_row.addWidget(close_icon)
+        root.addLayout(hdr_row)
+
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #E2E8F0; margin: 2px 0;")
-        lay.addWidget(sep)
+        sep.setStyleSheet("color: #E2E8F0; margin: 1px 0;")
+        root.addWidget(sep)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { background: #F1F5F9; width: 4px; border-radius: 2px; }
+            QScrollBar::handle:vertical { background: #CBD5E1; border-radius: 2px; min-height: 16px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(0, 2, 4, 2)
+        lay.setSpacing(5)
 
         if not plugins:
             empty = QLabel("No plugins found in /plugins.")
             empty.setFont(QFont("Segoe UI", 8))
             empty.setStyleSheet("color: #64748B; background: transparent;")
             lay.addWidget(empty)
+        else:
+            for p in plugins:
+                lay.addLayout(self._build_row(p))
 
-        for p in plugins:
-            lay.addLayout(self._build_row(p))
+        lay.addStretch(1)
+        scroll.setWidget(body)
+        root.addWidget(scroll, 1)
 
-        lay.addSpacing(4)
         close_btn = QPushButton("CLOSE")
-        close_btn.setFixedHeight(32)
-        close_btn.setFont(QFont("Segoe UI", 9))
+        close_btn.setFixedHeight(30)
+        close_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet("""
             QPushButton {
                 background: #F1F5F9; color: #334155;
-                border: 1px solid #CBD5E1; border-radius: 14px;
+                border: 1px solid #CBD5E1; border-radius: 12px;
             }
             QPushButton:hover { background: #E2E8F0; color: #0F172A; }
         """)
         close_btn.clicked.connect(self.hide)
-        lay.addWidget(close_btn)
-        self.adjustSize()
+        root.addWidget(close_btn)
 
     def _build_row(self, p: dict) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(6)
@@ -2033,7 +2168,7 @@ class AudioDeviceOverlay(_HudOverlay):
     webcam'."""
 
     picked = pyqtSignal()      # emitted after Apply, when something changed
-    _OW = 460
+    _OW, _OH = 314, 334
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2045,22 +2180,33 @@ class AudioDeviceOverlay(_HudOverlay):
             AudioDeviceOverlay {
                 background: #FFFFFF;
                 border: 1px solid #CBD5E1;
-                border-radius: 18px;
+                border-radius: 16px;
             }
         """)
         self.setFixedWidth(self._OW)
+        self.setFixedHeight(self._OH)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 16, 20, 16)
-        lay.setSpacing(6)
+        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setSpacing(5)
 
+        hdr_row = QHBoxLayout()
         hdr = QLabel("🎧  AUDIO DEVICES")
-        hdr.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
         hdr.setStyleSheet("color: #0F172A; background: transparent;")
-        lay.addWidget(hdr)
+        hdr_row.addWidget(hdr, 1)
+
+        close_icon = QPushButton("✕")
+        close_icon.setFixedSize(20, 20)
+        close_icon.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        close_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_icon.setStyleSheet("QPushButton { background: #F1F5F9; color: #64748B; border: none; border-radius: 10px; } QPushButton:hover { background: #E2E8F0; color: #0F172A; }")
+        close_icon.clicked.connect(self.hide)
+        hdr_row.addWidget(close_icon)
+        lay.addLayout(hdr_row)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #E2E8F0; margin: 2px 0;")
+        sep.setStyleSheet("color: #E2E8F0; margin: 1px 0;")
         lay.addWidget(sep)
 
         _combo_css = (
@@ -2161,7 +2307,7 @@ class MemoryOverlay(_HudOverlay):
     the other half of that change — a memory you cannot inspect is a memory you
     cannot trust, and 'delete' has to be something the person can do."""
 
-    _OW = 520
+    _OW, _OH = 314, 334
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2170,14 +2316,15 @@ class MemoryOverlay(_HudOverlay):
             MemoryOverlay {{
                 background: #FFFFFF;
                 border: 1px solid #CBD5E1;
-                border-radius: 18px;
+                border-radius: 16px;
             }}
         """)
         self.setFixedWidth(self._OW)
+        self.setFixedHeight(self._OH)
 
         self._lay = QVBoxLayout(self)
         lay = self._lay
-        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setContentsMargins(14, 12, 14, 12)
         lay.setSpacing(5)
         self._rebuild()
 
@@ -2276,7 +2423,7 @@ class MemoryOverlay(_HudOverlay):
         else:
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
-            scroll.setFixedHeight(min(420, 34 * len(rows) + 10))
+            scroll.setFixedHeight(min(170, 34 * len(rows) + 10))
             scroll.setStyleSheet(
                 "QScrollArea { border: 1px solid #E2E8F0; border-radius: 14px; "
                 "background: transparent; }"
@@ -2448,7 +2595,7 @@ class PluginSettingsOverlay(QWidget):
     """
 
     _test_done = pyqtSignal(str, bool, str)   # namespace, ok, message
-    _OW = 460
+    _OW, _OH = 314, 334
 
     def __init__(self, sections: list[dict], parent=None):
         super().__init__(parent)
@@ -2457,9 +2604,11 @@ class PluginSettingsOverlay(QWidget):
             PluginSettingsOverlay {
                 background: #FFFFFF;
                 border: 1px solid #CBD5E1;
-                border-radius: 18px;
+                border-radius: 16px;
             }
         """)
+        self.setFixedWidth(self._OW)
+        self.setFixedHeight(self._OH)
         self._sections = sections or []
         self._widgets: dict[tuple, object] = {}    # (namespace, key) -> input widget
         self._types:   dict[tuple, str]    = {}     # (namespace, key) -> field type
@@ -2467,12 +2616,12 @@ class PluginSettingsOverlay(QWidget):
         self._test_done.connect(self._on_test_done)
 
         self._fs = (f"QLineEdit {{ background: #F8FAFC; color: #0F172A; "
-                    f"border: 1px solid #CBD5E1; border-radius: 14px; padding: 4px 10px; }}"
+                    f"border: 1px solid #CBD5E1; border-radius: 12px; padding: 3px 8px; }}"
                     f"QLineEdit:focus {{ border: 1px solid {C.PRI}; background: #FFFFFF; }}")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(22, 16, 22, 16)
-        root.setSpacing(8)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(6)
 
         root.addWidget(self._lbl("⚙  PLUGIN SETTINGS", 12, True, color="#0F172A"))
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -2703,7 +2852,7 @@ class RemoteKeyOverlay(QWidget):
 
     closed = pyqtSignal()
 
-    _OW, _OH = 400, 465
+    _OW, _OH = 314, 334
 
     def __init__(self, url: str, key: str, auto_login_url: str = "",
                  manual_url: str = "", expiry_secs: int = 600, parent=None):
@@ -2713,17 +2862,19 @@ class RemoteKeyOverlay(QWidget):
             RemoteKeyOverlay {
                 background: #FFFFFF;
                 border: 1px solid #CBD5E1;
-                border-radius: 18px;
+                border-radius: 16px;
             }
         """)
+        self.setFixedWidth(self._OW)
+        self.setFixedHeight(self._OH)
         self._expiry          = time.time() + expiry_secs
         self._on_new_key      = None
         self._auto_login_url  = auto_login_url
         self._manual_url      = manual_url or url
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 16, 24, 16)
-        lay.setSpacing(5)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(4)
 
         def _lbl(txt, fs=9, bold=False, color=C.PRI,
                  align=Qt.AlignmentFlag.AlignCenter):
@@ -2743,7 +2894,7 @@ class RemoteKeyOverlay(QWidget):
         # ── QR code ───────────────────────────────────────────────────────────
         self._qr_label = QLabel()
         self._qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._qr_label.setFixedSize(176, 176)
+        self._qr_label.setFixedSize(100, 100)
         self._qr_label.setStyleSheet(
             "background: white; border-radius: 10px; padding: 4px;"
         )
@@ -2773,14 +2924,14 @@ class RemoteKeyOverlay(QWidget):
         lay.addWidget(self._url_lbl)
 
         self._key_lbl = QLabel(key)
-        self._key_lbl.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
+        self._key_lbl.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         self._key_lbl.setStyleSheet(f"""
             color: {C.ACC};
             background: {C.PANEL2};
             border: 1px solid {C.BORDER_B};
             border-radius: 8px;
             padding: 6px 4px;
-            letter-spacing: 10px;
+            letter-spacing: 4px; padding: 2px 4px;
         """)
         self._key_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self._key_lbl)
@@ -2848,7 +2999,7 @@ class RemoteKeyOverlay(QWidget):
             px = QPixmap()
             px.loadFromData(buf.getvalue())
             self._qr_label.setPixmap(
-                px.scaled(170, 170,
+                px.scaled(96, 96,
                           Qt.AspectRatioMode.KeepAspectRatio,
                           Qt.TransformationMode.SmoothTransformation)
             )
@@ -2912,7 +3063,7 @@ class RemoteKeyOverlay(QWidget):
                     border: 1px solid {C.BORDER_B};
                     border-radius: 8px;
                     padding: 6px 4px;
-                    letter-spacing: 10px;
+                    letter-spacing: 4px; padding: 2px 4px;
                 """)
                 self._timer_lbl.setStyleSheet(
                     f"color: {C.TEXT_MED}; background: transparent;"
@@ -3872,16 +4023,16 @@ class MainWindow(QMainWindow):
         _BTN_STYLE_PRI = f"""
             QPushButton {{
                 background: #F0F9FF; color: {C.PRI};
-                border: 1px solid #BAE6FD; border-radius: 13px;
-                text-align: left; padding: 0 10px; font-weight: 600;
+                border: 1px solid #BAE6FD; border-radius: 12px;
+                text-align: left; padding: 0 8px; font-weight: 600;
             }}
             QPushButton:hover {{ background: #E0F2FE; border-color: {C.PRI}; }}
         """
         _BTN_STYLE_DIM = f"""
             QPushButton {{
                 background: #FFFFFF; color: #334155;
-                border: 1px solid #E2E8F0; border-radius: 13px;
-                text-align: left; padding: 0 10px; font-weight: 500;
+                border: 1px solid #E2E8F0; border-radius: 12px;
+                text-align: left; padding: 0 8px; font-weight: 500;
             }}
             QPushButton:hover {{ background: #F8FAFC; color: #0F172A; border-color: #CBD5E1; }}
         """
@@ -3892,20 +4043,63 @@ class MainWindow(QMainWindow):
             QWidget#QuickDrawer {{
                 background: #FFFFFF;
                 border: 1px solid #CBD5E1;
-                border-radius: 14px;
+                border-radius: 16px;
             }}
         """)
         w.hide()
 
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(10, 8, 10, 10)
-        lay.setSpacing(5)
+        root_lay = QVBoxLayout(w)
+        root_lay.setContentsMargins(10, 8, 10, 8)
+        root_lay.setSpacing(5)
 
-        hdr = QLabel("◈ CONTROLS")
-        hdr.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
-        hdr.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; "
-                          f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
-        lay.addWidget(hdr)
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(4)
+        hdr = QLabel("⚙  SETTINGS")
+        hdr.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: #0F172A; background: transparent; font-weight: bold;")
+        hdr_row.addWidget(hdr, 1)
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: #F1F5F9; color: #64748B;
+                border: none; border-radius: 10px;
+            }
+            QPushButton:hover { background: #E2E8F0; color: #0F172A; }
+        """)
+        close_btn.clicked.connect(lambda: self._toggle_drawer(False))
+        hdr_row.addWidget(close_btn)
+        root_lay.addLayout(hdr_row)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #E2E8F0; margin: 0 0 2px 0;")
+        root_lay.addWidget(sep)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical {
+                background: #F1F5F9; width: 4px; border-radius: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: #CBD5E1; border-radius: 2px; min-height: 16px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(0, 2, 4, 4)
+        lay.setSpacing(4)
 
         remote_btn = QPushButton("◉  REMOTE CONTROL")
         remote_btn.setFixedHeight(30)
@@ -4030,10 +4224,13 @@ class MainWindow(QMainWindow):
         settings_btn.clicked.connect(self._open_plugin_settings)
         lay.addWidget(settings_btn)
 
-        w.adjustSize()
+        scroll.setWidget(inner)
+        root_lay.addWidget(scroll, 1)
         return w
 
     def _toggle_drawer(self, checked: bool):
+        if hasattr(self, '_drawer_btn') and self._drawer_btn.isChecked() != checked:
+            self._drawer_btn.setChecked(checked)
         if checked:
             self._refresh_wake_btns()   # resolve wake state on open (lazy)
             self._position_quick_drawer()
@@ -4045,10 +4242,10 @@ class MainWindow(QMainWindow):
     def _position_quick_drawer(self):
         if not hasattr(self, '_quick_drawer'):
             return
-        _W = 240
-        self._quick_drawer.setFixedWidth(_W)
-        self._quick_drawer.adjustSize()
-        self._quick_drawer.setGeometry(8, 34, _W, min(self._quick_drawer.sizeHint().height(), self.height() - 50))
+        cw = self.centralWidget()
+        _W = min(250, cw.width() - 16)
+        _H = min(316, cw.height() - 44)
+        self._quick_drawer.setGeometry(8, 36, _W, _H)
 
     def _build_input_row(self) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(6)
@@ -4589,17 +4786,11 @@ class MainWindow(QMainWindow):
         if self._remote_overlay:
             self._remote_overlay._do_close()
         cw  = self.centralWidget()
-        ow, oh = RemoteKeyOverlay._OW, RemoteKeyOverlay._OH
         ov  = RemoteKeyOverlay(url, key, auto_login_url=auto, manual_url=manual,
                                expiry_secs=600, parent=cw)
         ov.set_new_key_callback(self.on_remote_clicked)
-        ov.setGeometry(
-            (cw.width()  - ow) // 2,
-            (cw.height() - oh) // 2,
-            ow, oh,
-        )
-        ov.closed.connect(lambda: setattr(self, '_remote_overlay', None))
-        ov.show()
+        ov.closed.connect(lambda: setattr(self, "_remote_overlay", None))
+        self._centre_overlay(ov)
         self._remote_overlay = ov
         self._log.append_log(f"SYS: Remote key generated — manual: {manual or url}")
 
@@ -4970,16 +5161,9 @@ class MainWindow(QMainWindow):
             cfg.get("voice_name", ""),
             parent=cw,
         )
-        ow, oh = CustomizeOverlay._OW, CustomizeOverlay._OH
-        oh = min(oh, cw.height() - 16)
-        ov.setGeometry(
-            (cw.width()  - ow) // 2,
-            (cw.height() - oh) // 2,
-            ow, oh,
-        )
+        self._centre_overlay(ov)
         ov.on_preview = self._preview_ui_color
         ov.saved.connect(self._apply_name_update)
-        ov.show()
         self._customize_overlay = ov
 
     def _preview_ui_color(self, hex_color: str):
@@ -5042,12 +5226,22 @@ class MainWindow(QMainWindow):
     def _centre_overlay(self, ov) -> None:
         """Place a floating overlay in the middle of the HUD and show it."""
         cw = self.centralWidget()
+        max_w = min(316, cw.width() - 12)
+        max_h = min(336, cw.height() - 12)
+        ov.setMaximumWidth(max_w)
+        ov.setMaximumHeight(max_h)
+        if hasattr(ov, 'setFixedWidth'):
+            target_w = min(getattr(ov, '_OW', 314), max_w)
+            ov.setFixedWidth(target_w)
+        if hasattr(ov, 'setFixedHeight') and hasattr(ov, '_OH'):
+            target_h = min(ov._OH, max_h)
+            ov.setFixedHeight(target_h)
         ov.adjustSize()
-        ow = min(ov.width(), cw.width() - 16)
-        oh = min(ov.height(), cw.height() - 16)
+        ow = min(ov.width(), max_w)
+        oh = min(ov.height(), max_h)
         ov.setGeometry(
-            max(8, (cw.width()  - ow) // 2),
-            max(8, (cw.height() - oh) // 2),
+            max(6, (cw.width()  - ow) // 2),
+            max(6, (cw.height() - oh) // 2),
             ow, oh,
         )
         ov.show()
@@ -5104,29 +5298,14 @@ class MainWindow(QMainWindow):
         plugins = self.get_plugins() if self.get_plugins else []
         cw = self.centralWidget()
         ov = PluginManagerOverlay(plugins, parent=cw)
-        ov.adjustSize()
-        ov.setGeometry(
-            (cw.width()  - ov.width())  // 2,
-            (cw.height() - ov.height()) // 2,
-            ov.width(), ov.height(),
-        )
-        ov.show()
-        ov.raise_()
+        self._centre_overlay(ov)
         self._plugin_manager_overlay = ov   # keep a reference so it isn't GC'd
 
     def _open_plugin_settings(self):
         sections = self.get_plugin_settings() if self.get_plugin_settings else []
         cw = self.centralWidget()
         ov = PluginSettingsOverlay(sections, parent=cw)
-        ow = PluginSettingsOverlay._OW
-        oh = min(560, cw.height() - 16)
-        ov.setGeometry(
-            (cw.width()  - ow) // 2,
-            (cw.height() - oh) // 2,
-            ow, oh,
-        )
-        ov.show()
-        ov.raise_()
+        self._centre_overlay(ov)
         self._plugin_settings_overlay = ov   # keep a reference so it isn't GC'd
 
     # ── Clipboard intelligence ───────────────────────────────────────────────────
@@ -5206,17 +5385,18 @@ class MainWindow(QMainWindow):
 
 
     def shrink_to_circle(self):
-        """Smoothly shrink window to compact floating circle avatar with wave animation."""
+        """Smoothly shrink window to compact floating circle pill with wave animation stuck to desktop."""
         if getattr(self, '_is_circle_mode', False):
             return
         self._is_circle_mode = True
         self._normal_geo = self.geometry()
-        sz = 160
-        screen = QApplication.primaryScreen().availableGeometry()
-        # Pin pill to top-right corner
+        sz = 100
+        screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
+        ag = screen.availableGeometry()
         _margin = 16
-        target_x = screen.right() - sz - _margin
-        target_y = screen.top() + _margin
+        # Stick pill to desktop bottom-right corner
+        target_x = ag.right() - sz - _margin
+        target_y = ag.bottom() - sz - 40
         target_rect = QRect(target_x, target_y, sz, sz)
 
         if hasattr(self, '_header_widget'): self._header_widget.hide()
@@ -5224,9 +5404,13 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_footer_widget'): self._footer_widget.hide()
         if hasattr(self, '_content_panel'): self._content_panel.hide()
         if hasattr(self, '_quiz_panel'): self._quiz_panel.hide()
+        if hasattr(self, '_quick_drawer'): self._quick_drawer.hide()
+
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.show()
 
         self._circle_anim = QPropertyAnimation(self, b"geometry")
-        self._circle_anim.setDuration(420)
+        self._circle_anim.setDuration(360)
         self._circle_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._circle_anim.setStartValue(self.geometry())
         self._circle_anim.setEndValue(target_rect)
@@ -5234,7 +5418,6 @@ class MainWindow(QMainWindow):
         from PyQt6.QtGui import QRegion
         def _on_shrink_done():
             self.setMask(QRegion(0, 0, sz, sz, QRegion.RegionType.Ellipse))
-            # Start wave-pulse animation in HUD when in pill mode
             self._start_pill_wave()
             self.hud.update()
 
@@ -5307,7 +5490,8 @@ class MainWindow(QMainWindow):
         shrink_triggers = [
             "chote hojao", "chotay hojao", "chote ho jao", "chotay ho jao",
             "chota hojao", "chhota hojao", "chhota ho jao",
-            "pill", "shrink", "circle mode", "mini mode", "bubble mode"
+            "pill", "mini pill", "small", "small pill", "shrink", "circle mode",
+            "mini mode", "bubble mode", "stick to desktop", "desktop"
         ]
         restore_triggers = [
             "bade hojao", "baray hojao", "bade ho jao", "baray ho jao",
@@ -5336,6 +5520,38 @@ class MainWindow(QMainWindow):
 
     def mouseReleaseEvent(self, e):
         self._drag_pos = None
+        if getattr(self, '_is_circle_mode', False):
+            # Magnetically stick to nearest desktop screen edge
+            screen = QApplication.screenAt(self.geometry().center()) or QApplication.primaryScreen()
+            ag = screen.availableGeometry()
+            geo = self.geometry()
+            margin = 14
+            
+            dl = abs(geo.left() - ag.left())
+            dr = abs(ag.right() - geo.right())
+            dt = abs(geo.top() - ag.top())
+            db = abs(ag.bottom() - geo.bottom())
+            
+            min_d = min(dl, dr, dt, db)
+            nx, ny = geo.x(), geo.y()
+            if min_d == dl:
+                nx = ag.left() + margin
+            elif min_d == dr:
+                nx = ag.right() - geo.width() - margin
+            elif min_d == dt:
+                ny = ag.top() + margin
+            else:
+                ny = ag.bottom() - geo.height() - margin
+            
+            nx = max(ag.left() + margin, min(nx, ag.right() - geo.width() - margin))
+            ny = max(ag.top() + margin, min(ny, ag.bottom() - geo.height() - margin))
+            
+            self._snap_anim = QPropertyAnimation(self, b"geometry")
+            self._snap_anim.setDuration(180)
+            self._snap_anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+            self._snap_anim.setStartValue(geo)
+            self._snap_anim.setEndValue(QRect(nx, ny, geo.width(), geo.height()))
+            self._snap_anim.start()
         super().mouseReleaseEvent(e)
 
     def mouseDoubleClickEvent(self, e):
