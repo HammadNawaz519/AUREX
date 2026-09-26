@@ -62,8 +62,8 @@ def _read_full_config() -> dict:
 APP_VERSION  = "MARK LIV"
 APP_PROTOCOL = APP_VERSION.split()[-1]
 
-_DEFAULT_W, _DEFAULT_H = 500, 520
-_MIN_W,     _MIN_H     = 380, 380
+_DEFAULT_W, _DEFAULT_H = 340, 360
+_MIN_W,     _MIN_H     = 260, 280
 _LEFT_W  = 148
 _RIGHT_W = 310
 
@@ -891,14 +891,14 @@ class HudCanvas(QWidget):
             txt, col = f"{sym}  {self.state}", qcol(C.PRI)
 
         p.setPen(QPen(col, 1))
-        p.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
+        p.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        p.drawText(QRectF(0, sy, W, 20), Qt.AlignmentFlag.AlignCenter, txt)
 
         # waveform — reacts to the real audio level (mic while listening,
         # JARVIS's own voice while speaking). Falls back to a gentle idle
         # ripple when there's no sound. _amp_disp is the smoothed 0–1 level.
-        wy = sy + 30
-        N, bw = 36, 8
+        wy = sy + 22
+        N, bw = 24, 6
         wx0 = (W - N * bw) / 2
         amp = self._amp_disp
         mid = (N - 1) / 2.0
@@ -3000,14 +3000,14 @@ class MainWindow(QMainWindow):
             QWidget#CentralWidget {
                 background: #030910;
                 border: 1px solid #CBD5E1;
-                border-radius: 20px;
+                border-radius: 16px;
             }
         """)
         self.setCentralWidget(central)
 
         root = QVBoxLayout(central)
-        root.setContentsMargins(10, 8, 10, 10)
-        root.setSpacing(4)
+        root.setContentsMargins(8, 6, 8, 8)
+        root.setSpacing(2)
         self._header_widget = self._build_header()
         root.addWidget(self._header_widget)
 
@@ -3128,7 +3128,7 @@ class MainWindow(QMainWindow):
         if getattr(self, '_is_circle_mode', False):
             return
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0, 0, self.width(), self.height()), 20.0, 20.0)
+        path.addRoundedRect(QRectF(0, 0, self.width(), self.height()), 16.0, 16.0)
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
     def _show_camera_frame(self, img_bytes: bytes):
@@ -3650,11 +3650,11 @@ class MainWindow(QMainWindow):
 
     def _build_header(self) -> QWidget:
         w = QWidget()
-        w.setFixedHeight(36)
+        w.setFixedHeight(30)
         w.setStyleSheet("background: transparent;")
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(6, 4, 6, 2)
-        lay.setSpacing(6)
+        lay.setContentsMargins(4, 2, 4, 0)
+        lay.setSpacing(5)
 
         def _hdr_press(e):
             if e.button() == Qt.MouseButton.LeftButton:
@@ -3667,46 +3667,17 @@ class MainWindow(QMainWindow):
         w.mousePressEvent = _hdr_press
         w.mouseMoveEvent = _hdr_move
 
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(26, 26)
-        close_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setToolTip("Close")
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #FEE2E2; color: #DC2626;
-                border: 1px solid #FECDD3; border-radius: 13px;
-            }
-            QPushButton:hover { background: #EF4444; color: #FFFFFF; border-color: #DC2626; }
-        """)
-        close_btn.clicked.connect(self.close)
-        lay.addWidget(close_btn)
-
-        min_btn = QPushButton("─")
-        min_btn.setFixedSize(26, 26)
-        min_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        min_btn.setToolTip("Minimize")
-        min_btn.setStyleSheet("""
-            QPushButton {
-                background: #FFFFFF; color: #64748B;
-                border: 1px solid #CBD5E1; border-radius: 13px;
-            }
-            QPushButton:hover { background: #F1F5F9; color: #0F172A; border-color: #94A3B8; }
-        """)
-        min_btn.clicked.connect(self.showMinimized)
-        lay.addWidget(min_btn)
-
+        # Settings on the TOP LEFT
         self._drawer_btn = QPushButton("⚙  Settings")
-        self._drawer_btn.setFixedHeight(26)
+        self._drawer_btn.setFixedHeight(22)
         self._drawer_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
         self._drawer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._drawer_btn.setToolTip("Settings & Controls")
         self._drawer_btn.setStyleSheet(f"""
             QPushButton {{
                 background: #FFFFFF; color: #334155;
-                border: 1px solid #CBD5E1; border-radius: 13px;
-                padding: 0 10px; font-weight: 600;
+                border: 1px solid #CBD5E1; border-radius: 11px;
+                padding: 0 8px; font-weight: 600;
             }}
             QPushButton:hover {{ background: #F1F5F9; color: #0F172A; border-color: #94A3B8; }}
             QPushButton:checked {{ background: #E0F2FE; color: {C.PRI}; border-color: {C.PRI}; }}
@@ -3716,6 +3687,39 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._drawer_btn)
 
         lay.addStretch()
+
+        # Minimize on the TOP RIGHT
+        min_btn = QPushButton("─")
+        min_btn.setFixedSize(22, 22)
+        min_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        min_btn.setToolTip("Minimize")
+        min_btn.setStyleSheet("""
+            QPushButton {
+                background: #FFFFFF; color: #64748B;
+                border: 1px solid #CBD5E1; border-radius: 11px;
+            }
+            QPushButton:hover { background: #F1F5F9; color: #0F172A; border-color: #94A3B8; }
+        """)
+        min_btn.clicked.connect(self.showMinimized)
+        lay.addWidget(min_btn)
+
+        # Close on the TOP RIGHT
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(22, 22)
+        close_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setToolTip("Close")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: #FEE2E2; color: #DC2626;
+                border: 1px solid #FECDD3; border-radius: 11px;
+            }
+            QPushButton:hover { background: #EF4444; color: #FFFFFF; border-color: #DC2626; }
+        """)
+        close_btn.clicked.connect(self.close)
+        lay.addWidget(close_btn)
+
         return w
 
     def _tick_clock(self):
@@ -4044,7 +4048,7 @@ class MainWindow(QMainWindow):
         _W = 240
         self._quick_drawer.setFixedWidth(_W)
         self._quick_drawer.adjustSize()
-        self._quick_drawer.setGeometry(10, 42, _W, min(self._quick_drawer.sizeHint().height(), self.height() - 50))
+        self._quick_drawer.setGeometry(8, 34, _W, min(self._quick_drawer.sizeHint().height(), self.height() - 50))
 
     def _build_input_row(self) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(6)
