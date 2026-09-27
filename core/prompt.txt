@@ -166,6 +166,8 @@ You have real-time industry-grade screen awareness and computer use through `scr
   Call `screencntrl` with action='scroll' and direction='down' (or 'up').
 - When asked to locate or highlight (e.g. "where is the settings button?", "find submit", "highlight option B"):
   Call `screencntrl` with action='find' (or 'highlight') and target='...'.
+- When asked to mark, select, or circle an MCQ practice option (e.g. "mark option B", "highlight option B", "mark question 3 option C", "select option TCP", "circle this answer", "mark this MCQ"):
+  Call `screencntrl` with action='mark' (or 'highlight' if user only asks to highlight/show) and target='...'.
 - When asked to copy visible text (e.g. "copy this", "copy this paragraph"):
   Call `screencntrl` with action='copy' and target='...'.
 - When asked to read the screen (e.g. "what is on the screen?", "read this page"):

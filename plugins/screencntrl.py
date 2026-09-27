@@ -110,9 +110,9 @@ AUREX_OVERLAY_INJECTION_JS = """
       100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5), 0 0 12px rgba(59, 130, 246, 0.4); }
     }
     @keyframes aurexMcqPulse {
-      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6), 0 0 14px rgba(16, 185, 129, 0.5); }
-      50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.25), 0 0 24px rgba(16, 185, 129, 0.8); }
-      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6), 0 0 14px rgba(16, 185, 129, 0.5); }
+      0% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.10), 0 0 18px rgba(16, 185, 129, 0.35); }
+      50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.20), 0 0 24px rgba(16, 185, 129, 0.50); }
+      100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.10), 0 0 18px rgba(16, 185, 129, 0.35); }
     }
     @keyframes aurexFadeInScale {
       from { opacity: 0; transform: scale(0.96); }
@@ -126,13 +126,24 @@ AUREX_OVERLAY_INJECTION_JS = """
       background: rgba(59, 130, 246, 0.09) !important;
       border-radius: 10px !important;
       box-sizing: border-box !important;
-      transition: top 0.08s ease-out, left 0.08s ease-out, width 0.08s ease-out, height 0.08s ease-out, opacity 0.2s ease !important;
+      transition: top 0.08s ease-out, left 0.08s ease-out, width 0.08s ease-out, height 0.08s ease-out, opacity 0.25s ease, transform 0.25s ease !important;
       animation: aurexFadeInScale 0.2s cubic-bezier(0.16, 1, 0.3, 1), aurexPulse 2s infinite ease-in-out !important;
+      display: block !important;
+      visibility: visible !important;
     }
-    .aurex-pill-overlay.mcq-selected {
-      border-color: #10b981 !important;
-      background: rgba(16, 185, 129, 0.12) !important;
-      animation: aurexFadeInScale 0.2s cubic-bezier(0.16, 1, 0.3, 1), aurexMcqPulse 2s infinite ease-in-out !important;
+    .aurex-pill-overlay.mcq-selected, .aurex-mcq-pill {
+      border: 3px solid #10b981 !important;
+      background: rgba(16, 185, 129, 0.08) !important;
+      border-radius: 9999px !important;
+      box-sizing: border-box !important;
+      pointer-events: none !important;
+      position: fixed !important;
+      z-index: 2147483647 !important;
+      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.10), 0 0 18px rgba(16, 185, 129, 0.35) !important;
+      transition: top 0.08s ease-out, left 0.08s ease-out, width 0.08s ease-out, height 0.08s ease-out, opacity 0.3s ease, transform 0.3s ease !important;
+      animation: aurexFadeInScale 0.25s cubic-bezier(0.16, 1, 0.3, 1), aurexMcqPulse 2.5s infinite ease-in-out !important;
+      display: block !important;
+      visibility: visible !important;
     }
     .aurex-pill-badge {
       position: absolute !important;
@@ -171,12 +182,14 @@ AUREX_OVERLAY_INJECTION_JS = """
         continue;
       }
       const rect = item.element.getBoundingClientRect();
-      const pad = item.padding || 4;
-      item.overlay.style.top = (rect.top - pad) + 'px';
-      item.overlay.style.left = (rect.left - pad) + 'px';
-      item.overlay.style.width = (rect.width + pad * 2) + 'px';
-      item.overlay.style.height = (rect.height + pad * 2) + 'px';
+      const padX = item.padX !== undefined ? item.padX : (item.isMcq ? 10 : (item.padding || 4));
+      const padY = item.padY !== undefined ? item.padY : (item.isMcq ? 6 : (item.padding || 4));
+      item.overlay.style.top = (rect.top - padY) + 'px';
+      item.overlay.style.left = (rect.left - padX) + 'px';
+      item.overlay.style.width = (rect.width + padX * 2) + 'px';
+      item.overlay.style.height = (rect.height + padY * 2) + 'px';
       item.overlay.style.display = (rect.width > 0 && rect.height > 0) ? 'block' : 'none';
+      item.overlay.style.visibility = (rect.width > 0 && rect.height > 0) ? 'visible' : 'hidden';
     }
   }
 
@@ -184,13 +197,17 @@ AUREX_OVERLAY_INJECTION_JS = """
   window.addEventListener('resize', updateAllPositions, { passive: true });
   
   const observer = new MutationObserver(() => updateAllPositions());
-  observer.observe(document.body || document.documentElement, { attributes: true, childList: true, subtree: true });
+  const rootTarget = document.documentElement || document.body;
+  if (rootTarget) {
+    observer.observe(rootTarget, { attributes: true, childList: true, subtree: true });
+  }
 
   window.__aurex_highlight = function(target, label, durationMs, color, padding, isMcq) {
     ensureStyles();
-    label = label !== undefined ? label : 'AUREX';
-    durationMs = durationMs !== undefined ? durationMs : 3000;
-    color = color || '#3b82f6';
+    isMcq = !!isMcq;
+    label = label !== undefined ? label : (isMcq ? '' : 'AUREX');
+    durationMs = durationMs !== undefined ? durationMs : (isMcq ? 5000 : 3000);
+    color = color || (isMcq ? '#10b981' : '#3b82f6');
     padding = padding || 4;
 
     let el = null;
@@ -199,14 +216,53 @@ AUREX_OVERLAY_INJECTION_JS = """
     } else if (target && target.nodeType === 1) {
       el = target;
     }
-    if (!el) return false;
+    if (!el) return { success: false, reason: "TARGET_NOT_FOUND" };
+
+    if (isMcq) {
+      let rect = el.getBoundingClientRect();
+      if (rect.width <= 5 || rect.height <= 5) {
+        let p = el.parentElement;
+        while (p && p !== document.body && p !== document.documentElement) {
+          const pr = p.getBoundingClientRect();
+          if (pr.width > 20 && pr.height > 15) {
+            el = p;
+            break;
+          }
+          p = p.parentElement;
+        }
+      }
+    }
+
+    const initialRect = el.getBoundingClientRect();
+    if (isMcq && (initialRect.width <= 5 || initialRect.height <= 5)) {
+      return { success: false, reason: "TARGET_TOO_SMALL_OR_HIDDEN" };
+    }
+
+    const padX = isMcq ? 10 : padding;
+    const padY = isMcq ? 6 : padding;
 
     const overlay = document.createElement('div');
     overlay.className = 'aurex-pill-overlay' + (isMcq ? ' mcq-selected' : '');
-    overlay.style.borderColor = color;
-    overlay.style.background = color.startsWith('#') ? (color + '18') : 'rgba(59, 130, 246, 0.09)';
+    
+    if (isMcq) {
+      overlay.style.border = '3px solid #10b981';
+      overlay.style.background = 'rgba(16, 185, 129, 0.08)';
+      overlay.style.borderRadius = '9999px';
+      overlay.style.boxSizing = 'border-box';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.position = 'fixed';
+      overlay.style.zIndex = '2147483647';
+      overlay.style.boxShadow = '0 0 0 2px rgba(16, 185, 129, 0.10), 0 0 18px rgba(16, 185, 129, 0.35)';
+      overlay.style.display = 'block';
+      overlay.style.visibility = 'visible';
+      overlay.style.opacity = '1';
+    } else {
+      overlay.style.borderColor = color;
+      overlay.style.background = color.startsWith('#') ? (color + '18') : 'rgba(59, 130, 246, 0.09)';
+      overlay.style.borderRadius = '10px';
+    }
 
-    if (label) {
+    if (label && !isMcq) {
       const badge = document.createElement('div');
       badge.className = 'aurex-pill-badge';
       badge.style.background = color;
@@ -214,25 +270,54 @@ AUREX_OVERLAY_INJECTION_JS = """
       overlay.appendChild(badge);
     }
 
-    document.body.appendChild(overlay);
+    overlay.style.top = (initialRect.top - padY) + 'px';
+    overlay.style.left = (initialRect.left - padX) + 'px';
+    overlay.style.width = (initialRect.width + padX * 2) + 'px';
+    overlay.style.height = (initialRect.height + padY * 2) + 'px';
 
-    const record = { element: el, overlay: overlay, padding: padding };
+    const rootContainer = document.documentElement || document.body;
+    rootContainer.appendChild(overlay);
+
+    const oRect = overlay.getBoundingClientRect();
+    if (oRect.width <= 10 || oRect.height <= 10) {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      return { success: false, reason: "OVERLAY_TOO_SMALL", width: oRect.width, height: oRect.height };
+    }
+
+    const record = {
+      element: el,
+      overlay: overlay,
+      padding: padding,
+      padX: padX,
+      padY: padY,
+      isMcq: isMcq
+    };
     window.__aurex_active_overlays.push(record);
     updateAllPositions();
 
     if (durationMs > 0) {
       setTimeout(() => {
         overlay.style.opacity = '0';
-        overlay.style.transform = 'scale(0.92)';
+        overlay.style.transform = isMcq ? 'scale(0.97)' : 'scale(0.92)';
         setTimeout(() => {
           if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
           const idx = window.__aurex_active_overlays.indexOf(record);
           if (idx !== -1) window.__aurex_active_overlays.splice(idx, 1);
-        }, 220);
+        }, 300);
       }, durationMs);
     }
 
-    return true;
+    return {
+      success: true,
+      pillCreated: true,
+      targetTag: el.tagName,
+      rect: {
+        x: Math.round(oRect.left),
+        y: Math.round(oRect.top),
+        w: Math.round(oRect.width),
+        h: Math.round(oRect.height)
+      }
+    };
   };
 
   window.__aurex_clear_overlays = function() {
@@ -577,36 +662,48 @@ class TargetResolver:
         }
 
         # 1. Handle Contextual "this" / "that"
-        if not clean_q or clean_q in ("this", "that", "it", "here", "selected"):
+        is_contextual = not clean_q or clean_q in (
+            "this", "that", "it", "here", "selected",
+            "this mcq", "this option", "this answer",
+            "the option", "the answer", "mcq", "option"
+        )
+        if is_contextual:
             cdp = ChromeCDPManager.get_instance()
+            cand_loc = None
             if cdp.last_target_locator is not None:
                 try:
                     if cdp.last_target_locator.count() > 0:
+                        cand_loc = cdp.last_target_locator
                         metadata.update({"source": "CONTEXT_HISTORY_LOCATOR", "locator_str": "last_target_locator"})
-                        return cdp.last_target_locator, metadata
                 except Exception:
                     pass
 
-            last_target = cdp.last_target_info
-            if last_target and last_target.get("selector") and not last_target.get("selector", "").startswith("get_by_"):
+            if cand_loc is None:
+                last_target = cdp.last_target_info
+                if last_target and last_target.get("selector") and not last_target.get("selector", "").startswith("get_by_"):
+                    try:
+                        loc = page.locator(last_target["selector"]).first
+                        if loc.count() > 0:
+                            cand_loc = loc
+                            metadata.update({"source": "CONTEXT_HISTORY", "locator_str": last_target["selector"]})
+                    except Exception:
+                        pass
+
+            if cand_loc is None:
                 try:
-                    loc = page.locator(last_target["selector"]).first
-                    if loc.count() > 0:
-                        metadata.update({"source": "CONTEXT_HISTORY", "locator_str": last_target["selector"]})
-                        return loc, metadata
-                except Exception:
-                    pass
-
-            # Check active element
-            try:
-                active_loc = page.evaluate_handle("document.activeElement").as_element()
-                if active_loc:
                     loc = page.locator("*:focus").first
                     if loc.count() > 0:
+                        cand_loc = loc
                         metadata.update({"source": "DOM_ACTIVE_FOCUS", "locator_str": "*:focus"})
-                        return loc, metadata
-            except Exception:
-                pass
+                except Exception:
+                    pass
+
+            if cand_loc is not None:
+                vis_loc, vis_meta = TargetResolver._resolve_mcq_visual_target(page, cand_loc)
+                if vis_loc is not None and vis_meta.get("is_mcq"):
+                    metadata.update(vis_meta)
+                    return vis_loc, metadata
+                return cand_loc, metadata
 
         # 2. MCQ / Question pattern: e.g. "Question 4 option B", "option TCP under Question 3"
         mcq_loc, mcq_meta = TargetResolver._resolve_mcq_target(page, clean_q)
@@ -719,7 +816,7 @@ class TargetResolver:
     def _clean_query(q: str) -> str:
         s = q.strip()
         # Remove common command prefixes
-        s = re.sub(r"^(click|press|tap|select|open|find|highlight|scroll to|go to|copy|type in|type into)\s+", "", s, flags=re.I)
+        s = re.sub(r"^(click|press|tap|select|open|find|highlight|scroll to|go to|copy|type in|type into|mark|circle)\s+", "", s, flags=re.I)
         # Remove trailing punctuation
         s = re.sub(r"[.?!]+$", "", s).strip()
         return s
@@ -804,89 +901,491 @@ class TargetResolver:
         return None, {}
 
     @staticmethod
+    def _parse_mcq_query(query: str) -> Dict[str, Any]:
+        ql = query.lower().strip()
+        
+        # 1. Question number extraction: e.g. "Question 4", "Q4", "q.4", "question #3"
+        q_match = re.search(r"\b(?:question|q|q\.)\s*#?\s*(\d+)\b", ql)
+        q_num = int(q_match.group(1)) if q_match else None
+        
+        # Remove question part to isolate option
+        rest = re.sub(r"\b(?:question|q|q\.)\s*#?\s*\d+\b", "", ql).strip()
+        rest = re.sub(r"^(?:under|in|for|from|of)\b", "", rest).strip()
+
+        # 2. Option letter extraction
+        opt_letter = None
+        # "option B", "choice B", "answer B"
+        m_let = re.search(r"\b(?:option|choice|answer)\s*[:\-]?\s*([a-fA-F])\b", rest)
+        if not m_let:
+            # "B option", "B choice", "B answer"
+            m_let = re.search(r"\b([a-fA-F])\s*(?:option|choice|answer)\b", rest)
+        if not m_let:
+            # "mark B", "circle B", "highlight B", or standalone "B"
+            m_let = re.search(r"^(?:mark|circle|highlight|select|check|choose)?\s*([a-fA-F])\s*$", rest)
+        if not m_let:
+            # At end of string: "Question 4 B"
+            m_let = re.search(r"\b([a-fA-F])$", rest)
+            
+        if m_let:
+            opt_letter = m_let.group(1).upper()
+            
+        # 3. Token extraction for option text (e.g. "TCP", "UDP")
+        clean_tokens = re.sub(r"\b(question|q|q\d+|option|choice|answer|select|mark|circle|highlight|click|check|choose|the|practice|mcq|this)\b", "", rest)
+        tokens = [t.strip().lower() for t in clean_tokens.split() if len(t.strip()) > 1]
+        
+        is_mcq = (
+            q_num is not None or
+            opt_letter is not None or
+            any(k in ql for k in ("option", "question", "radio", "choice", "answer", "mcq", "practice", "q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"))
+        )
+        
+        return {
+            "is_mcq": is_mcq,
+            "q_num": q_num,
+            "opt_letter": opt_letter,
+            "tokens": tokens,
+            "raw": query
+        }
+
+    @staticmethod
+    def _resolve_mcq_visual_target(page: Page, target: Any) -> Tuple[Optional[Locator], Dict[str, Any]]:
+        """
+        Dedicated resolver that returns the Locator for the COMPLETE VISIBLE answer option.
+        Climbs from the radio input / label to the smallest visible container encompassing
+        the radio button and option text.
+        Never returns a tiny or hidden radio input.
+        """
+        JS_RESOLVE_VISUAL = """
+        (function(el) {
+          if (!el) return { found: false, isMcq: false };
+
+          let radioEl = null;
+          if (el.tagName === 'INPUT' && (el.type === 'radio' || el.type === 'checkbox')) {
+            radioEl = el;
+          } else if (el.getAttribute && (el.getAttribute('role') === 'radio' || el.getAttribute('role') === 'checkbox')) {
+            radioEl = el;
+          } else {
+            radioEl = el.querySelector ? el.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]') : null;
+            if (!radioEl && el.tagName === 'LABEL' && el.htmlFor) {
+              radioEl = document.getElementById(el.htmlFor);
+            }
+            if (!radioEl && el.parentElement) {
+              radioEl = el.parentElement.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+            }
+          }
+
+          if (!radioEl) {
+            const hasOptionClass = el.classList && Array.from(el.classList).some(c => /option|choice|answer/i.test(c));
+            if (!hasOptionClass) return { found: false, isMcq: false };
+          }
+
+          let labelEl = null;
+          if (radioEl && radioEl.id) {
+            try { labelEl = document.querySelector('label[for="' + CSS.escape(radioEl.id) + '"]'); } catch(e){}
+          }
+          if (!labelEl && radioEl && radioEl.closest) {
+            labelEl = radioEl.closest('label');
+          }
+          if (!labelEl && el.tagName === 'LABEL') {
+            labelEl = el;
+          }
+
+          let bestContainer = null;
+          let curr = (labelEl && radioEl && labelEl.contains(radioEl)) ? labelEl : (radioEl ? radioEl.parentElement : el);
+
+          if (labelEl && radioEl && labelEl.contains(radioEl)) {
+            const lr = labelEl.getBoundingClientRect();
+            const lStyle = window.getComputedStyle(labelEl);
+            if (lStyle.display !== 'none' && lStyle.visibility !== 'hidden' && lr.width > 20 && lr.height > 15) {
+              bestContainer = labelEl;
+            }
+          }
+
+          while (curr && curr !== document.body && curr !== document.documentElement) {
+            if (radioEl && !curr.contains(radioEl)) {
+              curr = curr.parentElement;
+              continue;
+            }
+
+            const radiosInCurr = curr.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"]');
+            if (radiosInCurr.length > 1) {
+              break;
+            }
+
+            const r = curr.getBoundingClientRect();
+            const style = window.getComputedStyle(curr);
+            const isVis = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && r.width > 5 && r.height > 5;
+
+            if (isVis) {
+              bestContainer = curr;
+              if (r.width >= 50 && r.height >= 18) {
+                const p = curr.parentElement;
+                if (p && p !== document.body && p !== document.documentElement) {
+                  const pRadios = p.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"]');
+                  if (pRadios.length === 1 && p.className && /option|choice|answer|item|row/i.test(p.className)) {
+                    const pr = p.getBoundingClientRect();
+                    if (pr.width >= r.width && pr.height >= r.height) {
+                      bestContainer = p;
+                    }
+                  }
+                }
+                break;
+              }
+            }
+
+            curr = curr.parentElement;
+          }
+
+          if (!bestContainer) {
+            bestContainer = labelEl || (radioEl ? radioEl.parentElement : el);
+          }
+          if (!bestContainer) return { found: false, isMcq: false };
+
+          let vr = bestContainer.getBoundingClientRect();
+          if (vr.width <= 5 || vr.height <= 5) {
+            let p = bestContainer.parentElement;
+            while (p && p !== document.body && p !== document.documentElement) {
+              const pr = p.getBoundingClientRect();
+              if (pr.width > 10 && pr.height > 10) {
+                bestContainer = p;
+                vr = pr;
+                break;
+              }
+              p = p.parentElement;
+            }
+          }
+
+          const vUid = 'aurex_mcq_vis_' + Math.random().toString(36).substring(2, 9);
+          bestContainer.setAttribute('data-aurex-mcq-vis', vUid);
+
+          let rUid = null;
+          if (radioEl) {
+            rUid = 'aurex_mcq_radio_' + Math.random().toString(36).substring(2, 9);
+            radioEl.setAttribute('data-aurex-mcq-radio', rUid);
+          }
+
+          return {
+            found: true,
+            isMcq: true,
+            visualSelector: `[data-aurex-mcq-vis="${vUid}"]`,
+            radioSelector: rUid ? `[data-aurex-mcq-radio="${rUid}"]` : null,
+            visualTag: bestContainer.tagName,
+            radioTag: radioEl ? radioEl.tagName : null,
+            text: (bestContainer.innerText || bestContainer.textContent || '').trim().substring(0, 100),
+            rect: {
+              x: Math.round(vr.left),
+              y: Math.round(vr.top),
+              width: Math.round(vr.width),
+              height: Math.round(vr.height)
+            }
+          };
+        })
+        """
+        try:
+            res = None
+            if isinstance(target, Locator):
+                res = target.evaluate(JS_RESOLVE_VISUAL)
+            elif isinstance(target, str):
+                loc = page.locator(target).first
+                if loc.count() > 0:
+                    res = loc.evaluate(JS_RESOLVE_VISUAL)
+            elif target is not None:
+                res = page.evaluate(JS_RESOLVE_VISUAL, target)
+
+            if res and res.get("found") and res.get("isMcq"):
+                vis_sel = res.get("visualSelector")
+                if vis_sel:
+                    v_loc = page.locator(vis_sel).first
+                    if v_loc.count() > 0:
+                        return v_loc, {
+                            "source": "MCQ_VISUAL_TARGET",
+                            "locator_str": vis_sel,
+                            "visual_selector": vis_sel,
+                            "radio_selector": res.get("radioSelector"),
+                            "is_mcq": True,
+                            "letter": res.get("letter"),
+                            "option_text": res.get("text"),
+                            "rect": res.get("rect"),
+                            "visual_tag": res.get("visualTag"),
+                            "radio_tag": res.get("radioTag")
+                        }
+        except Exception:
+            pass
+
+        return None, {}
+
+    @staticmethod
     def _resolve_mcq_target(page: Page, query: str) -> Tuple[Optional[Locator], Dict[str, Any]]:
         """
         Specialized resolver for MCQ and Practice Question structures.
-        Handles: "Question 4 option B", "option TCP under Question 3", "highlight option B".
+        Supports:
+          - "option B", "B option", "answer B", "choice B", "B"
+          - "option TCP", "answer TCP", "TCP option"
+          - "Question 4 option B", "Q4 option B", "question 4 answer B"
+          - "mark B", "circle B", "highlight B", "mark option B", "circle this answer"
         """
-        ql = query.lower()
-        is_mcq_query = any(k in ql for k in ("question", "option", "q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "radio"))
-        if not is_mcq_query:
+        parsed = TargetResolver._parse_mcq_query(query)
+        if not parsed["is_mcq"]:
             return None, {}
 
         JS_MCQ_SEARCH = """
-        (function(q) {
-          const qLower = q.toLowerCase();
-          const qNumMatch = qLower.match(/(?:question|q)\\s*(\\d+)/i);
-          const qNum = qNumMatch ? qNumMatch[1] : null;
+        (function(params) {
+          const qNum = params.q_num;
+          const optLetter = params.opt_letter ? params.opt_letter.toUpperCase() : null;
+          const tokens = params.tokens || [];
+          const rawQuery = (params.raw || '').toLowerCase();
 
-          const optLetterMatch = qLower.match(/option\\s*([a-d])\\b/i) || qLower.match(/\\b([a-d])\\b\\s*(?:option|choice)/i);
-          const optLetter = optLetterMatch ? optLetterMatch[1].toUpperCase() : null;
+          function resolveVisualContainer(radioEl, labelEl, fallbackEl) {
+            let bestContainer = null;
+            let curr = (labelEl && radioEl && labelEl.contains(radioEl)) ? labelEl : (radioEl ? radioEl.parentElement : fallbackEl);
 
-          // Find candidate question blocks
-          const blocks = Array.from(document.querySelectorAll('[id*="question"], [class*="question"], .q-block, div, section, fieldset'));
-          let bestBlock = null;
+            if (labelEl && radioEl && labelEl.contains(radioEl)) {
+              const lr = labelEl.getBoundingClientRect();
+              const lStyle = window.getComputedStyle(labelEl);
+              if (lStyle.display !== 'none' && lStyle.visibility !== 'hidden' && lr.width > 20 && lr.height > 15) {
+                bestContainer = labelEl;
+              }
+            }
 
-          if (qNum) {
-            for (const b of blocks) {
-              const text = (b.innerText || '').toLowerCase();
-              if (text.includes('question ' + qNum) || text.includes('q' + qNum)) {
-                if (b.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"]').length > 0) {
-                  bestBlock = b;
+            while (curr && curr !== document.body && curr !== document.documentElement) {
+              if (radioEl && !curr.contains(radioEl)) {
+                curr = curr.parentElement;
+                continue;
+              }
+
+              const radiosInCurr = curr.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"]');
+              if (radiosInCurr.length > 1) {
+                break;
+              }
+
+              const r = curr.getBoundingClientRect();
+              const style = window.getComputedStyle(curr);
+              const isVis = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && r.width > 5 && r.height > 5;
+
+              if (isVis) {
+                bestContainer = curr;
+                if (r.width >= 50 && r.height >= 18) {
+                  const p = curr.parentElement;
+                  if (p && p !== document.body && p !== document.documentElement) {
+                    const pRadios = p.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"]');
+                    if (pRadios.length === 1 && p.className && /option|choice|answer|item|row/i.test(p.className)) {
+                      const pr = p.getBoundingClientRect();
+                      if (pr.width >= r.width && pr.height >= r.height) {
+                        bestContainer = p;
+                      }
+                    }
+                  }
                   break;
                 }
               }
+
+              curr = curr.parentElement;
+            }
+
+            if (!bestContainer) {
+              bestContainer = labelEl || (radioEl ? radioEl.parentElement : fallbackEl);
+            }
+
+            let vr = bestContainer ? bestContainer.getBoundingClientRect() : { width: 0, height: 0, left: 0, top: 0 };
+            if (vr.width <= 5 || vr.height <= 5) {
+              let p = bestContainer ? bestContainer.parentElement : null;
+              while (p && p !== document.body && p !== document.documentElement) {
+                const pr = p.getBoundingClientRect();
+                if (pr.width > 10 && pr.height > 10) {
+                  bestContainer = p;
+                  vr = pr;
+                  break;
+                }
+                p = p.parentElement;
+              }
+            }
+
+            return { container: bestContainer, rect: vr };
+          }
+
+          let searchScope = document.body;
+          if (qNum !== null && qNum !== undefined) {
+            const candidates = Array.from(document.querySelectorAll(
+              'fieldset, [id*="question" i], [class*="question" i], [data-question], section, article, .card, div'
+            ));
+            let bestBlock = null;
+            for (const b of candidates) {
+              const text = (b.innerText || '').toLowerCase();
+              const hasQ = text.includes('question ' + qNum) ||
+                           text.includes('q' + qNum) ||
+                           text.includes('q.' + qNum) ||
+                           text.includes('question #' + qNum) ||
+                           text.match(new RegExp('\\\\b' + qNum + '[\\\\.\\\\)]\\\\s+'));
+              if (hasQ) {
+                const radios = b.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"]');
+                if (radios.length > 0) {
+                  if (!bestBlock || bestBlock.contains(b)) {
+                    bestBlock = b;
+                  }
+                }
+              }
+            }
+
+            if (!bestBlock) {
+              const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, legend, p, b, strong'));
+              for (const h of headings) {
+                const ht = (h.innerText || '').toLowerCase();
+                if (ht.includes('question ' + qNum) || ht.includes('q' + qNum) || ht.match(new RegExp('\\\\b' + qNum + '[\\\\.\\\\)]\\\\s+'))) {
+                  let parent = h.parentElement;
+                  while (parent && parent !== document.body) {
+                    const radios = parent.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"]');
+                    if (radios.length > 0) {
+                      bestBlock = parent;
+                      break;
+                    }
+                    parent = parent.parentElement;
+                  }
+                  if (bestBlock) break;
+                }
+              }
+            }
+
+            if (bestBlock) {
+              searchScope = bestBlock;
             }
           }
 
-          const searchScope = bestBlock || document.body;
-          const inputs = Array.from(searchScope.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], label'));
+          let inputs = Array.from(searchScope.querySelectorAll(
+            'input[type="radio"], input[type="checkbox"], [role="radio"]'
+          ));
+          if (inputs.length === 0) {
+            inputs = Array.from(searchScope.querySelectorAll('[class*="option" i], [class*="choice" i], label'));
+          }
+          if (inputs.length === 0) return { found: false };
+
+          const letterMap = { 'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4, 'F': 5 };
+          const targetIndex = optLetter ? letterMap[optLetter] : null;
+
+          let bestMatch = null;
+          let highestScore = -1;
 
           for (let i = 0; i < inputs.length; i++) {
             const el = inputs[i];
-            const text = (el.innerText || el.textContent || el.value || '').trim();
-            const parentText = (el.parentElement ? el.parentElement.innerText : '').trim();
+            let radio = (el.tagName === 'INPUT' || el.getAttribute('role') === 'radio') ? el : el.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"]');
+            if (!radio) radio = el;
+
+            let label = null;
+            if (radio && radio.id) {
+              try { label = document.querySelector('label[for="' + CSS.escape(radio.id) + '"]'); } catch(e){}
+            }
+            if (!label && radio && radio.closest) {
+              label = radio.closest('label');
+            }
+            if (!label && el.tagName === 'LABEL') {
+              label = el;
+            }
+
+            const container = label ? (label.contains(radio) ? label : label.parentElement) : radio.parentElement;
+            const text = (container ? (container.innerText || container.textContent) : (el.innerText || el.textContent || '')).trim();
+            const textLower = text.toLowerCase();
+
+            let score = 0;
 
             if (optLetter) {
-              if (text.startsWith(optLetter + ')') || text.startsWith(optLetter + '.') || text.startsWith(optLetter + ' ') ||
-                  parentText.startsWith(optLetter + ')') || parentText.startsWith(optLetter + '.')) {
-                let sel = el.id ? '#' + CSS.escape(el.id) : null;
-                if (!sel) {
-                  const uid = 'aurex_mcq_' + Math.random().toString(36).substring(2, 9);
-                  el.setAttribute('data-aurex-id', uid);
-                  sel = `[data-aurex-id="${uid}"]`;
+              const letterRegex = new RegExp('^\\\\s*\\\\(?\\\\s*' + optLetter + '\\\\s*[\\\\)\\\\.\\\\:\\\\-\\\\s]', 'i');
+              if (letterRegex.test(text)) {
+                score += 100;
+              } else if (container && container.querySelector) {
+                const badge = container.querySelector('.letter, .choice, .badge, b, strong, [class*="letter" i]');
+                if (badge && badge.innerText.trim().toUpperCase() === optLetter) {
+                  score += 95;
                 }
-                return { found: true, id: el.id, selector: sel, isRadio: true, letter: optLetter };
+              }
+
+              if (radio.value && radio.value.toUpperCase() === optLetter) {
+                score += 85;
+              }
+              if (radio.id && radio.id.toUpperCase().endsWith('_' + optLetter.toLowerCase())) {
+                score += 80;
+              }
+              if (targetIndex !== null && i === targetIndex) {
+                score += 50;
               }
             }
 
-            const tokens = qLower.replace(/(question|option|q\\d+|click|mark|select|radio)/g, '').trim().split(/\\s+/);
-            const matchesAll = tokens.length > 0 && tokens.every(t => t.length > 1 && (text.toLowerCase().includes(t) || parentText.toLowerCase().includes(t)));
-            if (matchesAll) {
-              let sel = el.id ? '#' + CSS.escape(el.id) : null;
-              if (!sel) {
-                const uid = 'aurex_mcq_' + Math.random().toString(36).substring(2, 9);
-                el.setAttribute('data-aurex-id', uid);
-                sel = `[data-aurex-id="${uid}"]`;
+            if (tokens.length > 0) {
+              const matchesAll = tokens.every(t => textLower.includes(t));
+              if (matchesAll) {
+                score += 90;
+              } else {
+                const matchCount = tokens.filter(t => textLower.includes(t)).length;
+                score += matchCount * 25;
               }
-              return { found: true, id: el.id, selector: sel, isRadio: true };
+            }
+
+            if (!optLetter && tokens.length === 0) {
+              const vr = el.getBoundingClientRect();
+              const vh = window.innerHeight;
+              if (vr.top >= 0 && vr.bottom <= vh) {
+                score += 40;
+              } else {
+                score += 20;
+              }
+            }
+
+            if (score > highestScore && score >= 40) {
+              highestScore = score;
+              bestMatch = { radio: radio, label: label, el: el, text: text, index: i };
             }
           }
-          return { found: false };
+
+          if (!bestMatch) return { found: false };
+
+          const res = resolveVisualContainer(bestMatch.radio, bestMatch.label, bestMatch.el);
+          const visualEl = res.container;
+          if (!visualEl) return { found: false };
+
+          const vr = res.rect;
+          const vUid = 'aurex_mcq_vis_' + Math.random().toString(36).substring(2, 9);
+          visualEl.setAttribute('data-aurex-mcq-vis', vUid);
+
+          let rUid = null;
+          if (bestMatch.radio) {
+            rUid = 'aurex_mcq_radio_' + Math.random().toString(36).substring(2, 9);
+            bestMatch.radio.setAttribute('data-aurex-mcq-radio', rUid);
+          }
+
+          return {
+            found: true,
+            visualSelector: `[data-aurex-mcq-vis="${vUid}"]`,
+            radioSelector: rUid ? `[data-aurex-mcq-radio="${rUid}"]` : null,
+            visualTag: visualEl.tagName,
+            radioTag: bestMatch.radio ? bestMatch.radio.tagName : null,
+            letter: optLetter || (targetIndex !== null ? Object.keys(letterMap)[bestMatch.index] : null),
+            text: bestMatch.text.substring(0, 100),
+            rect: {
+              x: Math.round(vr.left),
+              y: Math.round(vr.top),
+              width: Math.round(vr.width),
+              height: Math.round(vr.height)
+            }
+          };
         })
         """
 
         try:
-            res = page.evaluate(JS_MCQ_SEARCH, query)
+            res = page.evaluate(JS_MCQ_SEARCH, parsed)
             if res and res.get("found"):
-                sel = res.get("selector")
-                if sel:
-                    loc = page.locator(sel).first
+                vis_sel = res.get("visualSelector")
+                if vis_sel:
+                    loc = page.locator(vis_sel).first
                     if loc.count() > 0:
                         return loc, {
                             "source": "MCQ_PRACTICE_DETECTOR",
-                            "locator_str": sel,
-                            "is_mcq": True
+                            "locator_str": vis_sel,
+                            "visual_selector": vis_sel,
+                            "radio_selector": res.get("radioSelector"),
+                            "is_mcq": True,
+                            "letter": res.get("letter"),
+                            "option_text": res.get("text"),
+                            "rect": res.get("rect"),
+                            "visual_tag": res.get("visualTag"),
+                            "radio_tag": res.get("radioTag")
                         }
         except Exception:
             pass
@@ -1215,13 +1714,34 @@ class BrowserActionRouter:
 
         # ── FIND / HIGHLIGHT ──
         if action in ("find", "highlight", "show"):
-            label = "TARGET"
             if meta.get("is_mcq"):
-                label = "MCQ OPTION"
-            BrowserActionRouter._inject_pill_highlight(page, loc, label=label, duration_ms=4000)
-            dur = int((time.time() - start_time) * 1000)
-            _log_chrome_action("highlight", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
-            return True, f"Found and highlighted '{target_query}' with smooth AUREX pill.", metadata
+                pill_res = BrowserActionRouter._inject_pill_highlight(
+                    page, loc, label="", duration_ms=5000, color="#10b981", is_mcq=True
+                )
+                pill_ok = bool(isinstance(pill_res, dict) and (pill_res.get("success") or pill_res.get("pillCreated")))
+                r = pill_res.get("rect", {}) if isinstance(pill_res, dict) else {}
+                radio_desc = meta.get("radio_tag") or "radio"
+                vis_desc = meta.get("visual_tag") or "container"
+
+                print(f"[MCQ] Radio target: {radio_desc}")
+                print(f"[MCQ] Visual target: {vis_desc}")
+                print(f"[MCQ] Rect: x={r.get('x', 0)} y={r.get('y', 0)} w={r.get('w', 0)} h={r.get('h', 0)}")
+                print(f"[MCQ] Pill created: {'PASS' if pill_ok else 'FAIL'}")
+
+                dur = int((time.time() - start_time) * 1000)
+                if not pill_ok:
+                    _log_chrome_action("highlight", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "FAIL", dur)
+                    return False, f"Could not create visible AUREX pill around MCQ option '{target_query}'.", metadata
+
+                _log_chrome_action("highlight", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
+                letter = meta.get("letter")
+                opt_str = f"option {letter}" if letter else f"'{target_query}'"
+                return True, f"Highlighted {opt_str} with AUREX pill.", metadata
+            else:
+                BrowserActionRouter._inject_pill_highlight(page, loc, label="TARGET", duration_ms=4000)
+                dur = int((time.time() - start_time) * 1000)
+                _log_chrome_action("highlight", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
+                return True, f"Found and highlighted '{target_query}' with smooth AUREX pill.", metadata
 
         # ── COPY DIRECTLY FROM DOM (NO MOUSE DRAGGING) ──
         if action == "copy":
@@ -1254,23 +1774,74 @@ class BrowserActionRouter:
             return True, f"Entered '{text}' into '{target_query}'.", metadata
 
         # ── PRACTICE / MCQ OPTION SELECTION (Requirement 25, 26) ──
-        if meta.get("is_mcq") or action in ("check", "select_option", "mark"):
+        if meta.get("is_mcq") or action in ("check", "select_option", "mark", "circle"):
+            # Resolve the underlying radio element for checking
+            radio_loc = None
+            if meta.get("radio_selector"):
+                try:
+                    radio_loc = page.locator(meta["radio_selector"]).first
+                except Exception:
+                    pass
+            if not radio_loc or radio_loc.count() == 0:
+                try:
+                    r_cand = loc.locator('input[type="radio"], input[type="checkbox"], [role="radio"]').first
+                    if r_cand.count() > 0:
+                        radio_loc = r_cand
+                except Exception:
+                    pass
+            if not radio_loc or radio_loc.count() == 0:
+                radio_loc = loc
+
             try:
-                loc.check(timeout=2000)
+                radio_loc.check(timeout=2000)
             except Exception:
-                loc.click(timeout=2000)
+                try:
+                    radio_loc.click(timeout=2000)
+                except Exception:
+                    try:
+                        loc.click(timeout=2000)
+                    except Exception:
+                        pass
 
             # Verification of checked state
             is_checked = False
             try:
-                is_checked = loc.is_checked()
+                is_checked = radio_loc.is_checked()
             except Exception:
-                is_checked = True
+                try:
+                    is_checked = page.evaluate("el => !!(el.checked || el.getAttribute('aria-checked') === 'true')", radio_loc.element_handle())
+                except Exception:
+                    is_checked = True
 
-            BrowserActionRouter._inject_pill_highlight(page, loc, label="SELECTED", duration_ms=4000, color="#10b981", is_mcq=True)
+            # Draw green rounded pill around the COMPLETE visible option
+            pill_res = BrowserActionRouter._inject_pill_highlight(
+                page, loc, label="", duration_ms=5000, color="#10b981", is_mcq=True
+            )
+            pill_ok = bool(isinstance(pill_res, dict) and (pill_res.get("success") or pill_res.get("pillCreated")))
+            r = pill_res.get("rect", {}) if isinstance(pill_res, dict) else {}
+            radio_desc = meta.get("radio_tag") or "INPUT (radio)"
+            vis_desc = meta.get("visual_tag") or "CONTAINER"
+
+            print(f"[MCQ] Radio target: {radio_desc}")
+            print(f"[MCQ] Visual target: {vis_desc}")
+            print(f"[MCQ] Rect: x={r.get('x', 0)} y={r.get('y', 0)} w={r.get('w', 0)} h={r.get('h', 0)}")
+            print(f"[MCQ] Pill created: {'PASS' if pill_ok else 'FAIL'}")
+
             dur = int((time.time() - start_time) * 1000)
+            if not pill_ok:
+                _log_chrome_action("mcq_mark", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "FAIL", dur)
+                return False, f"Could not create visible AUREX pill around MCQ option '{target_query}'.", metadata
+
             _log_chrome_action("mcq_mark", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS" if is_checked else "CLICKED", dur)
-            return True, f"Marked practice option '{target_query}'. (Checked: {is_checked})", metadata
+            letter = meta.get("letter")
+            if letter:
+                opt_display = f"option {letter}"
+            elif meta.get("option_text"):
+                opt_display = f"option '{meta.get('option_text')}'"
+            else:
+                opt_display = f"'{target_query}'"
+
+            return True, f"Marked {opt_display} with AUREX pill.", metadata
 
         # ── CLICK / DOUBLE CLICK / RIGHT CLICK ──
         if action in ("click", "double_click", "right_click", "press"):
@@ -1325,17 +1896,26 @@ class BrowserActionRouter:
         duration_ms: int = 3000,
         color: str = "#3b82f6",
         is_mcq: bool = False
-    ):
+    ) -> Dict[str, Any]:
         try:
             try:
-                page.evaluate(f"if (!window.__aurex_highlight) {{ {AUREX_OVERLAY_INJECTION_JS} }}")
+                has_overlay = page.evaluate("() => typeof window.__aurex_highlight === 'function'")
+                if not has_overlay:
+                    page.evaluate(AUREX_OVERLAY_INJECTION_JS)
             except Exception:
                 pass
-            locator.evaluate(
-                "el => window.__aurex_highlight ? window.__aurex_highlight(el, '" + label + "', " + str(duration_ms) + ", '" + color + "', 4, " + str(is_mcq).lower() + ") : null"
+            label_json = json.dumps(label)
+            color_json = json.dumps(color)
+            js_call = (
+                f"el => window.__aurex_highlight ? window.__aurex_highlight(el, {label_json}, "
+                f"{duration_ms}, {color_json}, 4, {str(is_mcq).lower()}) : {{ success: false, reason: 'NO_AUREX_FUNC' }}"
             )
-        except Exception:
-            pass
+            res = locator.evaluate(js_call)
+            if isinstance(res, dict):
+                return res
+            return {"success": bool(res), "pillCreated": bool(res)}
+        except Exception as e:
+            return {"success": False, "pillCreated": False, "error": str(e)}
 
     @staticmethod
     def _extract_dom_text(locator: Locator) -> str:
@@ -1530,7 +2110,8 @@ def is_chrome_target(action: str, target: str, text: str) -> bool:
     # Explicit browser keywords
     if any(k in combined for k in (
         "chrome", "google", "browser", "website", "web page", "url", "tab",
-        "youtube", "github", "search in", "question", "option", "mcq", "localhost"
+        "youtube", "github", "search in", "question", "option", "mcq", "localhost",
+        "mark", "circle", "answer", "choice"
     )):
         return True
 
@@ -1613,7 +2194,7 @@ PLUGIN = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "click | double_click | right_click | type | fill | copy | scroll | hover | find | highlight | read | open | switch_tab | new_tab | press_key"
+                "description": "click | double_click | right_click | type | fill | copy | scroll | hover | find | highlight | read | open | switch_tab | new_tab | press_key | mark | circle | select_option | check"
             },
             "target": {
                 "type": "STRING",
