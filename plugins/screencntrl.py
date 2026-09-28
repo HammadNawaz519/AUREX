@@ -925,13 +925,38 @@ class TargetResolver:
     @staticmethod
     def _clean_query(q: str) -> str:
         s = q.strip()
-        # Remove common command prefixes
+        # Strip polite fillers first
+        s = re.sub(r"^(?:please|can you|could you|would you|kindly|now|just)\s+", "", s, flags=re.I)
+        # Remove common command prefixes (longer phrases first to avoid partial matches)
         s = re.sub(
-            r"^(?:click|press|tap|select|open|find|highlight|scroll to|go to|copy|type in|type into|type|fill in|fill|write in|write|clear|erase|mark|circle|check|choose|show|focus on|focus|switch to)\s+",
+            r"^(?:"
+            r"navigate to|go to|scroll to|scroll down to|scroll up to|focus on|switch to|"
+            r"type into|type in|fill in|write in|write to|"
+            r"click on|click the|click|"
+            r"double.click|right.click|"
+            r"press on|press|"
+            r"tap on|tap|"
+            r"select option|select|"
+            r"open up|open|"
+            r"find the|find|"
+            r"highlight the|highlight|"
+            r"copy the|copy|"
+            r"type|fill|write|"
+            r"clear out|clear|erase|"
+            r"mark the|mark|"
+            r"circle the|circle|"
+            r"check the|check|"
+            r"choose the|choose|"
+            r"show the|show|"
+            r"hover over|hover|"
+            r"search for|search"
+            r")\s+",
             "", s, flags=re.I
         )
+        # Remove leading articles
+        s = re.sub(r"^(?:the|a|an)\s+", "", s, flags=re.I)
         # Remove trailing punctuation
-        s = re.sub(r"[.?!]+$", "", s).strip()
+        s = re.sub(r"[.?!,]+$", "", s).strip()
         return s
 
     @staticmethod
@@ -1752,12 +1777,13 @@ class BrowserActionRouter:
         metadata: Dict[str, Any] = {"action": action, "target": target_query}
 
         # ── NAVIGATION & TAB ACTIONS ──
-        if action in ("open", "navigate", "goto"):
+        if action in ("open", "navigate", "goto", "go", "visit"):
             url = target_query or text
             if not url:
                 return False, "No URL provided to navigate.", metadata
+            url = url.strip()
             if not url.startswith("http://") and not url.startswith("https://") and not url.startswith("file:///"):
-                if "." in url and not " " in url:
+                if "." in url and " " not in url:
                     url = "https://" + url
                 else:
                     url = f"https://www.google.com/search?q={url.replace(' ', '+')}"
@@ -1765,37 +1791,88 @@ class BrowserActionRouter:
                 page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 cdp._ensure_overlay_injected(page)
                 dur = int((time.time() - start_time) * 1000)
-                _log_chrome_action(action, target_query, "PLAYWRIGHT", "page.goto", "PASS", dur)
-                return True, f"Navigated to: {page.url} ({page.title()})", metadata
+                _log_chrome_action(action, url, "PLAYWRIGHT", "page.goto", "PASS", dur)
+                return True, f"Navigated to: {page.title()} — {page.url}", metadata
             except Exception as e:
                 return False, f"Navigation failed: {e}", metadata
 
         if action in ("back", "go_back"):
-            page.go_back(timeout=5000)
-            return True, f"Navigated back to: {page.title()}", metadata
+            try:
+                page.go_back(timeout=6000)
+                return True, f"Went back to: {page.title()} — {page.url}", metadata
+            except Exception as e:
+                return False, f"Could not navigate back: {e}", metadata
 
         if action in ("forward", "go_forward"):
-            page.go_forward(timeout=5000)
-            return True, f"Navigated forward to: {page.title()}", metadata
+            try:
+                page.go_forward(timeout=6000)
+                return True, f"Went forward to: {page.title()} — {page.url}", metadata
+            except Exception as e:
+                return False, f"Could not navigate forward: {e}", metadata
 
         if action in ("reload", "refresh"):
-            page.reload()
-            return True, f"Reloaded page: {page.title()}", metadata
+            page.reload(wait_until="domcontentloaded", timeout=15000)
+            cdp._ensure_overlay_injected(page)
+            return True, f"Reloaded: {page.title()}", metadata
 
         if action == "new_tab":
-            cdp.new_tab(target_query or text)
-            return True, f"Opened new tab: {page.title()}", metadata
+            new_p = cdp.new_tab(target_query or text)
+            return True, f"Opened new tab: {new_p.title() or (target_query or 'blank')}", metadata
 
         if action == "switch_tab":
             ok, msg = cdp.switch_tab(target_query or text)
             return ok, msg, metadata
 
+        if action in ("close_tab", "close tab"):
+            tab_label = target_query or text
+            pages = [p for p in cdp.context.pages if not p.is_closed()]
+            closed = False
+            for p in pages:
+                try:
+                    if not tab_label or tab_label.lower() in p.title().lower() or tab_label.lower() in p.url.lower():
+                        title = p.title()
+                        p.close()
+                        closed = True
+                        return True, f"Closed tab: '{title}'", metadata
+                except Exception:
+                    pass
+            if not closed:
+                return False, "No matching tab found to close.", metadata
+
+        if action in ("list_tabs", "tabs", "show_tabs"):
+            tabs = cdp.list_tabs()
+            if not tabs:
+                return True, "No open tabs found.", metadata
+            lines = [f"Open Chrome Tabs ({len(tabs)}):"]
+            for t in tabs:
+                marker = " ◀ ACTIVE" if t["active"] else ""
+                lines.append(f"  [{t['index']}] {t['title']} — {t['url'][:60]}{marker}")
+            return True, "\n".join(lines), metadata
+
+        if action in ("page_info", "current_tab", "current_page", "where", "url"):
+            return True, f"Current page: {page.title()}\nURL: {page.url}", metadata
+
         # ── PAGE READING ──
-        if action in ("read", "summary", "extract"):
+        if action in ("read", "summary", "extract", "describe", "what_is_on_screen", "whats_on_page"):
             page_text = BrowserActionRouter._read_page_content(page)
             dur = int((time.time() - start_time) * 1000)
             _log_chrome_action("read", page.title(), "DOM_TEXT", "document.body.innerText", "PASS", dur)
             return True, page_text, metadata
+
+        # ── SCREENSHOT / CAPTURE ──
+        if action in ("screenshot", "capture", "snap", "take_screenshot"):
+            try:
+                import datetime
+                save_dir = os.path.join(os.path.expanduser("~"), "Pictures", "AUREX Captures")
+                os.makedirs(save_dir, exist_ok=True)
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = os.path.join(save_dir, f"aurex_capture_{ts}.png")
+                page.screenshot(path=filename, full_page=("full" in (target_query or "").lower()))
+                dur = int((time.time() - start_time) * 1000)
+                _log_chrome_action("screenshot", page.title(), "PLAYWRIGHT", "page.screenshot", "PASS", dur)
+                return True, f"Screenshot saved to: {filename}", metadata
+            except Exception as e:
+                return False, f"Screenshot failed: {e}", metadata
 
         # ── SMOOTH SCROLLING ──
         if action == "scroll":
@@ -1819,18 +1896,27 @@ class BrowserActionRouter:
         metadata.update(meta)
 
         if loc is None or loc.count() == 0:
-            # Smart Find + Dynamic Scroll Loop (Requirement 14)
-            if action in ("click", "find", "highlight", "type", "copy"):
-                for _ in range(3):
-                    BrowserScroller.smooth_scroll_direction(page, direction="down", amount=500)
+            # Smart Find + Dynamic Scroll Loop: scroll down up to 3x, also try scrolling up once
+            if action in ("click", "find", "highlight", "type", "fill", "copy", "clear", "hover"):
+                # Try scrolling down to find
+                for scroll_attempt in range(3):
+                    BrowserScroller.smooth_scroll_direction(page, direction="down", amount=400)
                     loc, meta = TargetResolver.resolve_target(page, target_query, action_type=action)
                     if loc and loc.count() > 0:
                         break
+                # If still not found, reset to top and try again
+                if loc is None or loc.count() == 0:
+                    try:
+                        page.evaluate("window.scrollTo(0, 0)")
+                        time.sleep(0.3)
+                        loc, meta = TargetResolver.resolve_target(page, target_query, action_type=action)
+                    except Exception:
+                        pass
 
             if loc is None or loc.count() == 0:
                 dur = int((time.time() - start_time) * 1000)
                 _log_chrome_action(action, target_query, "DOM", "NOT_FOUND", "FAIL", dur)
-                return False, f"Could not find element matching '{target_query}' on {page.title()}.", metadata
+                return False, f"Could not find '{target_query}' on '{page.title()}'. Try 'read' to see what's on this page.", metadata
 
         # Record last target
         cdp.last_target_info = {
@@ -2059,7 +2145,7 @@ class BrowserActionRouter:
             return True, f"Marked {opt_display} with AUREX pill.", metadata
 
         # ── CLICK / DOUBLE CLICK / RIGHT CLICK ──
-        if action in ("click", "double_click", "right_click", "press"):
+        if action in ("click", "double_click", "right_click", "press", "tap"):
             # Animate AUREX visual pill around target first
             BrowserActionRouter._inject_pill_highlight(page, loc, label="CLICKING", duration_ms=1800)
 
@@ -2067,39 +2153,81 @@ class BrowserActionRouter:
             if click_type == "right" or action == "right_click":
                 btn = "right"
 
+            clicked = False
             try:
                 if action == "double_click" or click_type == "double":
-                    loc.dblclick(timeout=3500)
+                    loc.dblclick(timeout=4000)
                 else:
-                    loc.click(button=btn, timeout=3500)
-            except Exception as e:
-                # Fallback: DOM dispatchEvent
+                    loc.click(button=btn, timeout=4000)
+                clicked = True
+            except Exception:
+                # Fallback 1: force scroll into view then click
+                try:
+                    loc.scroll_into_view_if_needed(timeout=2000)
+                    loc.click(button=btn, timeout=3000, force=True)
+                    clicked = True
+                except Exception:
+                    pass
+
+            if not clicked:
+                # Fallback 2: JS dispatch click
                 try:
                     loc.evaluate("el => { el.focus(); el.click(); }")
-                except Exception as e2:
+                    clicked = True
+                except Exception as e_js:
                     dur = int((time.time() - start_time) * 1000)
                     _log_chrome_action(action, target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "FAIL", dur)
-                    return False, f"Failed to click '{target_query}': {e2}", metadata
+                    return False, f"Failed to click '{target_query}': {e_js}", metadata
 
-            # Verification
-            time.sleep(0.3)
+            # Detect if click triggered navigation
+            time.sleep(0.35)
             dur = int((time.time() - start_time) * 1000)
             _log_chrome_action(action, target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
-            return True, f"Clicked '{target_query}' successfully.", metadata
+            result_text = meta.get("text", target_query) or target_query
+            return True, f"Clicked '{result_text}'.", metadata
 
         # ── HOVER ──
         if action == "hover":
             BrowserActionRouter._inject_pill_highlight(page, loc, label="HOVER", duration_ms=2500)
-            loc.hover(timeout=3000)
+            try:
+                loc.hover(timeout=3000)
+            except Exception:
+                loc.scroll_into_view_if_needed(timeout=1500)
+                loc.hover(timeout=3000)
             dur = int((time.time() - start_time) * 1000)
             _log_chrome_action("hover", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
             return True, f"Hovered over '{target_query}'.", metadata
 
+        # ── FOCUS / ACTIVATE ──
+        if action in ("focus", "activate", "select_all"):
+            try:
+                loc.focus(timeout=2500)
+                if action == "select_all":
+                    page.keyboard.press("Control+A")
+            except Exception:
+                loc.evaluate("el => el.focus()")
+            BrowserActionRouter._inject_pill_highlight(page, loc, label="FOCUSED", duration_ms=2000)
+            return True, f"Focused on '{target_query}'.", metadata
+
         # ── PRESS KEY / HOTKEY ──
         if action in ("press_key", "key", "hotkey"):
             key = (text or target_query).strip()
-            page.keyboard.press(key)
-            return True, f"Pressed key '{key}'.", metadata
+            # Normalize common key names
+            key_norm = key.lower().replace(" ", "")
+            key_map = {
+                "enter": "Enter", "return": "Enter", "tab": "Tab", "escape": "Escape",
+                "esc": "Escape", "space": "Space", "backspace": "Backspace", "delete": "Delete",
+                "del": "Delete", "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft",
+                "right": "ArrowRight", "home": "Home", "end": "End", "pageup": "PageUp",
+                "pagedown": "PageDown", "f5": "F5", "f12": "F12",
+                "ctrl+a": "Control+a", "ctrl+c": "Control+c", "ctrl+v": "Control+v",
+                "ctrl+z": "Control+z", "ctrl+s": "Control+s", "ctrl+f": "Control+f",
+                "ctrl+w": "Control+w", "ctrl+t": "Control+t", "ctrl+r": "Control+r",
+                "ctrl+l": "Control+l", "ctrl+enter": "Control+Enter",
+            }
+            key_final = key_map.get(key_norm, key)
+            page.keyboard.press(key_final)
+            return True, f"Pressed key '{key_final}'.", metadata
 
         return False, f"Unsupported browser action: '{action}'.", metadata
 
@@ -2455,7 +2583,14 @@ def is_chrome_target(action: str, target: str, text: str) -> bool:
     combined = f"{action} {target} {text}"
 
     # Browser navigation actions always go to Chrome
-    if action in ("open", "navigate", "goto", "new_tab", "switch_tab", "back", "go_back", "forward", "go_forward", "reload", "refresh"):
+    if action in (
+        "open", "navigate", "goto", "go", "visit",
+        "new_tab", "switch_tab", "close_tab", "list_tabs", "tabs", "show_tabs",
+        "back", "go_back", "forward", "go_forward", "reload", "refresh",
+        "screenshot", "capture", "snap", "take_screenshot",
+        "page_info", "current_tab", "current_page", "where", "url",
+        "read", "summary", "extract", "describe", "what_is_on_screen",
+    ):
         return True
 
     # URL patterns always go to Chrome
@@ -2464,9 +2599,10 @@ def is_chrome_target(action: str, target: str, text: str) -> bool:
 
     # Explicit browser keywords
     if any(k in combined for k in (
-        "chrome", "google", "browser", "website", "web page", "url", "tab",
+        "chrome", "google", "browser", "website", "web page", "webpage", "url", "tab",
         "youtube", "github", "search in", "question", "option", "mcq", "localhost",
-        "mark", "circle", "answer", "choice"
+        "mark", "circle", "answer", "choice", "screenshot", "screen shot",
+        "what is on", "what's on", "list tab", "open tab", "close tab", "current page"
     )):
         return True
 
@@ -2538,43 +2674,58 @@ def route_screen_command(
 PLUGIN = {
     "name": "screencntrl",
     "description": (
-        "Chrome-native full-power computer use & screen understanding agent. "
-        "Operates directly on Google Chrome's DOM, accessibility tree, and semantic page structure. "
-        "Translates natural language instructions into real browser actions: 'click Login', 'click the blue button', "
-        "'click this', 'copy this', 'type my email here', 'scroll down smoothly', 'scroll to Question 8', "
-        "'highlight option B', 'mark practice option TCP', 'what is on this page'. "
-        "Provides dynamic visual pill highlights around detected options and verified direct actions."
+        "AUREX Chrome-native computer use & screen understanding agent. "
+        "Operates directly on Chrome's DOM, accessibility tree, and real semantic page structure via CDP/Playwright. "
+        "Can click, type, scroll, copy, fill forms, navigate, mark MCQ options, capture screenshots, and read page content. "
+        "Examples: 'click Login', 'type my email into email field', 'scroll down', 'scroll to heading Features', "
+        "'open youtube.com', 'highlight option B', 'mark option TCP', 'what is on this page', 'take a screenshot', "
+        "'click the first button', 'press ctrl+c', 'clear search box', 'switch to Gmail tab', 'close this tab', "
+        "'list all open tabs', 'click close button', 'double click the image', 'hover over profile'. "
+        "Uses animated AUREX visual pill overlays for element targeting feedback. "
+        "Falls back to Windows UIA + WinRT OCR for non-browser desktop apps."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "click | double_click | right_click | type | fill | clear | copy | scroll | hover | find | highlight | read | open | switch_tab | new_tab | press_key | hotkey | mark | circle | select_option | check"
+                "description": (
+                    "The action to perform. Supported values: "
+                    "click | double_click | right_click | tap | type | fill | clear | erase | "
+                    "copy | scroll | hover | focus | find | highlight | read | describe | "
+                    "open | navigate | back | forward | reload | screenshot | capture | "
+                    "switch_tab | new_tab | close_tab | list_tabs | page_info | "
+                    "press_key | hotkey | mark | circle | select_option | check | select_all"
+                )
             },
             "target": {
                 "type": "STRING",
-                "description": "Natural language element description: e.g. 'Login', 'blue button', 'search box', 'Question 4 option B', 'section called Installation', 'this', 'that'"
+                "description": (
+                    "Natural language element or page target description. Examples: "
+                    "'Login button', 'blue button', 'search box', 'email field', 'first link', "
+                    "'second option', 'last item', 'Question 4 option B', 'option TCP', "
+                    "'section called Installation', 'close button', 'YouTube tab', 'this', 'that'"
+                )
             },
             "text": {
                 "type": "STRING",
-                "description": "Text to write for type/fill actions or URL for open action"
+                "description": "Text to type/fill for type actions, URL for open/navigate actions, or key name for press_key (e.g. 'Enter', 'Escape', 'ctrl+s')"
             },
             "direction": {
                 "type": "STRING",
-                "description": "up | down | left | right for smooth scroll action"
+                "description": "Scroll direction: up | down | left | right"
             },
             "click_type": {
                 "type": "STRING",
-                "description": "single | double | right"
+                "description": "Click type: single | double | right"
             },
             "highlight": {
                 "type": "BOOLEAN",
-                "description": "Show animated AUREX visual pill overlay around target"
+                "description": "Whether to show an animated AUREX visual pill overlay around the detected target element"
             },
             "explain": {
                 "type": "BOOLEAN",
-                "description": "Return debug grounding details"
+                "description": "Return debug grounding details showing how the element was resolved"
             }
         },
         "required": [
