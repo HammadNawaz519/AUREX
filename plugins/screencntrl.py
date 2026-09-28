@@ -652,14 +652,58 @@ class TargetResolver:
     """
 
     @staticmethod
+    def _extract_ordinal_and_query(q: str) -> Tuple[Optional[int], str]:
+        """
+        Extracts ordinal indicator (first/1st, second/2nd, etc.) from query.
+        Returns (ordinal_index, cleaned_query).
+        """
+        ord_map = {
+            "first": 0, "1st": 0,
+            "second": 1, "2nd": 1,
+            "third": 2, "3rd": 2,
+            "fourth": 3, "4th": 3,
+            "fifth": 4, "5th": 4,
+            "sixth": 5, "6th": 5,
+            "last": -1, "final": -1,
+        }
+        pattern = r"\b(the\s+)?(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th|last|final)\b"
+        m = re.search(pattern, q, flags=re.I)
+        if m:
+            ord_key = m.group(2).lower()
+            clean = re.sub(pattern, "", q, count=1, flags=re.I).strip()
+            clean = re.sub(r"\s+", " ", clean).strip()
+            return ord_map.get(ord_key), clean
+        return None, q
+
+    @staticmethod
     def resolve_target(page: Page, query: str, action_type: str = "click") -> Tuple[Optional[Locator], Dict[str, Any]]:
-        clean_q = TargetResolver._clean_query(query)
+        raw_clean = TargetResolver._clean_query(query)
+        ord_idx, clean_q = TargetResolver._extract_ordinal_and_query(raw_clean)
+        
         metadata: Dict[str, Any] = {
             "source": "UNKNOWN",
             "locator_str": "",
             "text": "",
-            "score": 0.0
+            "score": 0.0,
+            "ordinal": ord_idx
         }
+
+        def _pick(cand_loc: Optional[Locator], idx: Optional[int]) -> Optional[Locator]:
+            if cand_loc is None:
+                return None
+            try:
+                cnt = cand_loc.count()
+                if cnt == 0:
+                    return None
+                if idx is None:
+                    return cand_loc.first
+                if idx == -1:
+                    return cand_loc.last
+                if 0 <= idx < cnt:
+                    return cand_loc.nth(idx)
+                return cand_loc.first
+            except Exception:
+                return cand_loc.first
 
         # 1. Handle Contextual "this" / "that"
         is_contextual = not clean_q or clean_q in (
@@ -721,10 +765,11 @@ class TargetResolver:
             sec_name = re.sub(r"\b(section|heading|called|titled|named)\b", "", clean_q, flags=re.I).strip()
             if sec_name:
                 try:
-                    h_loc = page.get_by_role("heading", name=re.compile(rf"{re.escape(sec_name)}", re.I)).first
-                    if h_loc.count() > 0:
+                    h_loc = page.get_by_role("heading", name=re.compile(rf"{re.escape(sec_name)}", re.I))
+                    target_h = _pick(h_loc, ord_idx)
+                    if target_h and target_h.count() > 0:
                         metadata.update({"source": "SECTION_HEADING", "locator_str": f"heading('{sec_name}')"})
-                        return h_loc, metadata
+                        return target_h, metadata
                 except Exception:
                     pass
 
@@ -732,62 +777,126 @@ class TargetResolver:
         role_hint, name_hint = TargetResolver._extract_role_and_name(clean_q)
         if role_hint:
             try:
-                role_loc = page.get_by_role(role_hint, name=re.compile(rf"{re.escape(name_hint)}", re.I)).first
-                if role_loc.count() > 0 and role_loc.is_visible():
+                role_loc = page.get_by_role(role_hint, name=re.compile(rf"{re.escape(name_hint)}", re.I))
+                target_role = _pick(role_loc, ord_idx)
+                if target_role and target_role.count() > 0 and target_role.is_visible():
                     metadata.update({
                         "source": "ROLE_ACCESSIBLE_NAME",
                         "locator_str": f"get_by_role('{role_hint}', name='{name_hint}')",
                         "text": name_hint
                     })
-                    return role_loc, metadata
+                    return target_role, metadata
             except Exception:
                 pass
 
         # 4. Standard User-Facing Semantic Locators
         # Label
         try:
-            loc = page.get_by_label(re.compile(rf"{re.escape(clean_q)}", re.I)).first
-            if loc.count() > 0 and loc.is_visible():
+            lbl_loc = page.get_by_label(re.compile(rf"{re.escape(clean_q)}", re.I))
+            target_lbl = _pick(lbl_loc, ord_idx)
+            if target_lbl and target_lbl.count() > 0 and target_lbl.is_visible():
                 metadata.update({"source": "GET_BY_LABEL", "locator_str": f"get_by_label('{clean_q}')"})
-                return loc, metadata
+                return target_lbl, metadata
         except Exception:
             pass
 
         # Placeholder (especially for inputs)
         try:
-            loc = page.get_by_placeholder(re.compile(rf"{re.escape(clean_q)}", re.I)).first
-            if loc.count() > 0 and loc.is_visible():
+            ph_loc = page.get_by_placeholder(re.compile(rf"{re.escape(clean_q)}", re.I))
+            target_ph = _pick(ph_loc, ord_idx)
+            if target_ph and target_ph.count() > 0 and target_ph.is_visible():
                 metadata.update({"source": "GET_BY_PLACEHOLDER", "locator_str": f"get_by_placeholder('{clean_q}')"})
-                return loc, metadata
+                return target_ph, metadata
         except Exception:
             pass
 
         # Button by text
         try:
-            loc = page.get_by_role("button", name=re.compile(rf"{re.escape(clean_q)}", re.I)).first
-            if loc.count() > 0 and loc.is_visible():
+            btn_loc = page.get_by_role("button", name=re.compile(rf"{re.escape(clean_q)}", re.I))
+            target_btn = _pick(btn_loc, ord_idx)
+            if target_btn and target_btn.count() > 0 and target_btn.is_visible():
                 metadata.update({"source": "BUTTON_BY_TEXT", "locator_str": f"get_by_role('button', name='{clean_q}')"})
-                return loc, metadata
+                return target_btn, metadata
         except Exception:
             pass
 
         # Link by text
         try:
-            loc = page.get_by_role("link", name=re.compile(rf"{re.escape(clean_q)}", re.I)).first
-            if loc.count() > 0 and loc.is_visible():
+            lnk_loc = page.get_by_role("link", name=re.compile(rf"{re.escape(clean_q)}", re.I))
+            target_lnk = _pick(lnk_loc, ord_idx)
+            if target_lnk and target_lnk.count() > 0 and target_lnk.is_visible():
                 metadata.update({"source": "LINK_BY_TEXT", "locator_str": f"get_by_role('link', name='{clean_q}')"})
-                return loc, metadata
+                return target_lnk, metadata
         except Exception:
             pass
 
         # Text Locator
         try:
-            loc = page.get_by_text(re.compile(rf"{re.escape(clean_q)}", re.I), exact=False).first
-            if loc.count() > 0 and loc.is_visible():
+            txt_loc = page.get_by_text(re.compile(rf"{re.escape(clean_q)}", re.I), exact=False)
+            target_txt = _pick(txt_loc, ord_idx)
+            if target_txt and target_txt.count() > 0 and target_txt.is_visible():
                 metadata.update({"source": "GET_BY_TEXT", "locator_str": f"get_by_text('{clean_q}')"})
-                return loc, metadata
+                return target_txt, metadata
         except Exception:
             pass
+
+        # 4b. Common Icon / Action Controls
+        icon_queries = {
+            "close": ["button[aria-label*='close' i]", "button.close", "[aria-label*='dismiss' i]", "[title*='close' i]", "button[data-action*='close' i]"],
+            "cancel": ["button[aria-label*='cancel' i]", "button:has-text('Cancel')"],
+            "menu": ["button[aria-label*='menu' i]", "[aria-label*='navigation' i]", "button[id*='menu' i]", "button.menu-toggle"],
+            "settings": ["button[aria-label*='setting' i]", "[aria-label*='preference' i]", "[title*='setting' i]"],
+            "search": ["button[aria-label*='search' i]", "input[type='search']", "input[name*='search' i]", "[placeholder*='search' i]"],
+            "refresh": ["button[aria-label*='refresh' i]", "button[aria-label*='reload' i]"],
+            "copy": ["button[aria-label*='copy' i]", "button[title*='copy' i]", "[data-testid*='copy' i]"],
+            "submit": ["button[type='submit']", "input[type='submit']", "button:has-text('Submit')"],
+        }
+        for key, sel_list in icon_queries.items():
+            if key in clean_q.lower():
+                for sel in sel_list:
+                    try:
+                        cand = page.locator(sel)
+                        target_el = _pick(cand, ord_idx)
+                        if target_el and target_el.count() > 0 and target_el.is_visible():
+                            metadata.update({"source": "ICON_CONTROL", "locator_str": sel})
+                            return target_el, metadata
+                    except Exception:
+                        pass
+
+        # 4c. Enhanced Form & Input Attribute Selectors
+        if action_type in ("type", "fill", "write", "enter", "click", "clear") or any(k in clean_q.lower() for k in ("input", "field", "box", "email", "password", "user", "name", "prompt", "message", "search", "code")):
+            attr_selectors = [
+                f"input[name*='{clean_q}' i], textarea[name*='{clean_q}' i]",
+                f"input[id*='{clean_q}' i], textarea[id*='{clean_q}' i]",
+                f"input[placeholder*='{clean_q}' i], textarea[placeholder*='{clean_q}' i]",
+                f"[aria-label*='{clean_q}' i]",
+                f"[data-testid*='{clean_q}' i]",
+                f"[title*='{clean_q}' i]",
+                f"[contenteditable='true'][aria-label*='{clean_q}' i]",
+                f"[contenteditable='true'][placeholder*='{clean_q}' i]",
+                f"[role='textbox'][aria-label*='{clean_q}' i]",
+            ]
+            for sel in attr_selectors:
+                try:
+                    cand = page.locator(sel)
+                    target_el = _pick(cand, ord_idx)
+                    if target_el and target_el.count() > 0 and target_el.is_visible():
+                        metadata.update({"source": "ATTRIBUTE_SELECTOR", "locator_str": sel})
+                        return target_el, metadata
+                except Exception:
+                    pass
+
+            # Generic rich contenteditable if prompt/message is asked and no specific element found
+            if clean_q.lower() in ("prompt", "message", "chat", "textbox", "input", "box", "field", "text"):
+                for sel in ["[contenteditable='true']", "[role='textbox']", "textarea", "input[type='text']"]:
+                    try:
+                        cand = page.locator(sel)
+                        target_el = _pick(cand, ord_idx)
+                        if target_el and target_el.count() > 0 and target_el.is_visible():
+                            metadata.update({"source": "GENERIC_EDITABLE", "locator_str": sel})
+                            return target_el, metadata
+                    except Exception:
+                        pass
 
         # 5. Semantic In-Page DOM Scoring (Inspects colors, hierarchy, and tokens)
         ranked = TargetResolver._score_dom_elements(page, clean_q)
@@ -795,15 +904,16 @@ class TargetResolver:
             top = ranked[0]
             sel = top.get("selector")
             if sel:
-                loc = page.locator(sel).first
-                if loc.count() > 0:
+                loc = page.locator(sel)
+                target_loc = _pick(loc, ord_idx)
+                if target_loc and target_loc.count() > 0:
                     metadata.update({
                         "source": "DOM_SEMANTIC_SCORING",
                         "locator_str": sel,
                         "text": top.get("text", ""),
                         "score": top.get("score", 0.0)
                     })
-                    return loc, metadata
+                    return target_loc, metadata
 
         # 6. Deep Path: Visual Grounding if Canvas or pure graphic
         vis_loc, vis_meta = TargetResolver._visual_grounding_fallback(page, clean_q)
@@ -816,30 +926,40 @@ class TargetResolver:
     def _clean_query(q: str) -> str:
         s = q.strip()
         # Remove common command prefixes
-        s = re.sub(r"^(click|press|tap|select|open|find|highlight|scroll to|go to|copy|type in|type into|mark|circle)\s+", "", s, flags=re.I)
+        s = re.sub(
+            r"^(?:click|press|tap|select|open|find|highlight|scroll to|go to|copy|type in|type into|type|fill in|fill|write in|write|clear|erase|mark|circle|check|choose|show|focus on|focus|switch to)\s+",
+            "", s, flags=re.I
+        )
         # Remove trailing punctuation
         s = re.sub(r"[.?!]+$", "", s).strip()
         return s
 
     @staticmethod
     def _extract_role_and_name(q: str) -> Tuple[Optional[str], str]:
-        ql = q.lower()
+        ql = q.lower().strip()
         if "button" in ql or "btn" in ql:
-            name = re.sub(r"\b(the|blue|green|red|submit|login|search)?\s*(button|btn)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"\b(?:button|btn)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"^(?:the|blue|green|red|primary|secondary)\s+", "", name, flags=re.I).strip()
             return "button", name or q
         if "link" in ql:
-            name = re.sub(r"\b(link|hyperlink)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"\b(?:link|hyperlink)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"^(?:the)\s+", "", name, flags=re.I).strip()
             return "link", name or q
         if "checkbox" in ql:
-            name = re.sub(r"\b(checkbox|check box)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"\b(?:checkbox|check box)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"^(?:the)\s+", "", name, flags=re.I).strip()
             return "checkbox", name or q
         if "radio" in ql:
-            name = re.sub(r"\b(radio|radio button|option)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"\b(?:radio|radio button)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"^(?:the)\s+", "", name, flags=re.I).strip()
             return "radio", name or q
-        if "search" in ql and ("box" in ql or "field" in ql or "input" in ql):
-            return "searchbox", "search"
+        if "search" in ql and ("box" in ql or "field" in ql or "input" in ql or "bar" in ql):
+            name = re.sub(r"\b(?:box|field|input|bar)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"^(?:the)\s+", "", name, flags=re.I).strip()
+            return "searchbox", name or "search"
         if "textbox" in ql or "input" in ql or "field" in ql:
-            name = re.sub(r"\b(textbox|input|field|box)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"\b(?:textbox|input|field|box)\b", "", q, flags=re.I).strip()
+            name = re.sub(r"^(?:the)\s+", "", name, flags=re.I).strip()
             return "textbox", name or q
         return None, q
 
@@ -1422,9 +1542,17 @@ class TargetResolver:
             const val = (el.value || '').toLowerCase();
             const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
             const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+            const title = (el.getAttribute('title') || '').toLowerCase();
+            const testId = (el.getAttribute('data-testid') || el.getAttribute('data-qa') || el.getAttribute('data-cy') || '').toLowerCase();
             const role = (el.getAttribute('role') || el.tagName.toLowerCase());
             const id = (el.id || '').toLowerCase();
             const name = (el.getAttribute('name') || '').toLowerCase();
+
+            let svgLabel = '';
+            const svg = el.querySelector ? el.querySelector('svg') : null;
+            if (svg) {
+              svgLabel = (svg.getAttribute('aria-label') || svg.getAttribute('title') || svg.getAttribute('class') || '').toLowerCase();
+            }
 
             let score = 0;
 
@@ -1433,6 +1561,9 @@ class TargetResolver:
               else if (text.includes(t)) score += 30;
               if (placeholder.includes(t)) score += 35;
               if (ariaLabel.includes(t)) score += 35;
+              if (title.includes(t)) score += 35;
+              if (testId.includes(t)) score += 35;
+              if (svgLabel.includes(t)) score += 35;
               if (val.includes(t)) score += 25;
               if (id.includes(t)) score += 20;
               if (name.includes(t)) score += 20;
@@ -1755,23 +1886,107 @@ class BrowserActionRouter:
             _log_chrome_action("copy", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
             return True, f"Copied to clipboard: '{extracted_text}'", metadata
 
+        # ── CLEAR ──
+        if action in ("clear", "erase", "delete_text"):
+            BrowserActionRouter._inject_pill_highlight(page, loc, label="CLEAR", duration_ms=2000)
+            try:
+                loc.fill("")
+            except Exception:
+                try:
+                    loc.click()
+                    page.keyboard.press("Control+A")
+                    page.keyboard.press("Backspace")
+                except Exception:
+                    pass
+            dur = int((time.time() - start_time) * 1000)
+            _log_chrome_action("clear", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
+            return True, f"Cleared text in '{target_query}'.", metadata
+
+        # ── SELECT / DROPDOWN OPTION ──
+        if action in ("select", "select_option", "choose") and not meta.get("is_mcq"):
+            BrowserActionRouter._inject_pill_highlight(page, loc, label="SELECT", duration_ms=2500)
+            opt_val = text or target_query
+            selected = False
+            try:
+                is_sel = loc.evaluate("el => el.tagName === 'SELECT' || !!el.querySelector('select') || !!el.closest('select')")
+                if is_sel:
+                    target_sel = loc if loc.evaluate("el => el.tagName === 'SELECT'") else loc.locator("select").first
+                    target_sel.select_option(label=opt_val)
+                    selected = True
+            except Exception:
+                try:
+                    target_sel.select_option(value=opt_val)
+                    selected = True
+                except Exception:
+                    pass
+
+            if selected:
+                dur = int((time.time() - start_time) * 1000)
+                _log_chrome_action("select_option", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
+                return True, f"Selected '{opt_val}' in dropdown '{target_query}'.", metadata
+
         # ── TYPE / FILL ──
         if action in ("type", "fill", "write", "enter"):
             BrowserActionRouter._inject_pill_highlight(page, loc, label="TYPING", duration_ms=2500)
-            try:
-                loc.fill(text, timeout=3000)
-            except Exception:
-                loc.click()
-                loc.press_sequentially(text, delay=20)
             
+            # Check if target is contenteditable / rich editor (Discord, Slack, ChatGPT, Claude, etc.)
+            is_rich = False
+            try:
+                is_rich = loc.evaluate("el => !!(el.isContentEditable || el.getAttribute('contenteditable') === 'true' || el.getAttribute('role') === 'textbox' || el.closest('[contenteditable=\"true\"]'))")
+            except Exception:
+                pass
+
+            typed_ok = False
+            if is_rich:
+                try:
+                    loc.click()
+                    time.sleep(0.05)
+                    page.keyboard.press("Control+A")
+                    page.keyboard.press("Backspace")
+                    page.keyboard.insert_text(text)
+                    typed_ok = True
+                except Exception:
+                    pass
+
+            if not typed_ok:
+                try:
+                    loc.fill(text, timeout=3000)
+                    typed_ok = True
+                except Exception:
+                    try:
+                        loc.click()
+                        loc.press_sequentially(text, delay=15)
+                        typed_ok = True
+                    except Exception:
+                        try:
+                            loc.focus()
+                            page.keyboard.insert_text(text)
+                            typed_ok = True
+                        except Exception:
+                            pass
+
+            # Auto submit / press Enter if requested
+            want_enter = (
+                action == "enter" or
+                "press enter" in target_query.lower() or
+                "hit enter" in target_query.lower() or
+                "and submit" in target_query.lower()
+            )
+            if want_enter:
+                time.sleep(0.1)
+                page.keyboard.press("Enter")
+
             # Verification
             val = ""
             try: val = loc.input_value()
-            except Exception: pass
-            verif = "PASS" if (not text or text.lower() in val.lower()) else "VERIFY_WARNING"
+            except Exception:
+                try: val = loc.inner_text()
+                except Exception: pass
+            verif = "PASS" if (not text or text.lower() in (val or "").lower() or is_rich) else "VERIFY_WARNING"
             dur = int((time.time() - start_time) * 1000)
             _log_chrome_action("type", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), verif, dur)
-            return True, f"Entered '{text}' into '{target_query}'.", metadata
+            res_msg = f"Entered '{text}' into '{target_query}'." + (" (Submitted with Enter)" if want_enter else "")
+            return True, res_msg, metadata
 
         # ── PRACTICE / MCQ OPTION SELECTION (Requirement 25, 26) ──
         if meta.get("is_mcq") or action in ("check", "select_option", "mark", "circle"):
@@ -1880,9 +2095,9 @@ class BrowserActionRouter:
             _log_chrome_action("hover", target_query, meta.get("source", "DOM"), meta.get("locator_str", ""), "PASS", dur)
             return True, f"Hovered over '{target_query}'.", metadata
 
-        # ── PRESS KEY ──
-        if action in ("press_key", "key"):
-            key = text or target_query
+        # ── PRESS KEY / HOTKEY ──
+        if action in ("press_key", "key", "hotkey"):
+            key = (text or target_query).strip()
             page.keyboard.press(key)
             return True, f"Pressed key '{key}'.", metadata
 
@@ -1946,13 +2161,22 @@ class BrowserActionRouter:
         (function() {
           const title = document.title;
           const url = window.location.href;
-          const headings = Array.from(document.querySelectorAll('h1, h2, h3')).map(h => h.innerText.trim()).filter(Boolean);
-          const paragraphs = Array.from(document.querySelectorAll('p')).map(p => p.innerText.trim()).filter(p => p.length > 20).slice(0, 10);
+          const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4')).map(h => h.innerText.trim()).filter(Boolean);
+          const paragraphs = Array.from(document.querySelectorAll('p, article, .content')).map(p => p.innerText.trim()).filter(p => p.length > 20).slice(0, 12);
+          const inputs = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"]'))
+            .map(i => {
+              const label = i.getAttribute('aria-label') || i.getAttribute('placeholder') || i.name || i.id || '';
+              return label ? `${i.tagName.toLowerCase()}[${label}]` : '';
+            }).filter(Boolean).slice(0, 8);
+          const buttons = Array.from(document.querySelectorAll('button, a[role="button"], [role="button"]'))
+            .map(b => (b.innerText || b.getAttribute('aria-label') || '').trim()).filter(b => b.length > 1 && b.length < 30).slice(0, 10);
           return {
             title: title,
             url: url,
-            headings: headings.slice(0, 8),
-            paragraphs: paragraphs
+            headings: headings.slice(0, 10),
+            paragraphs: paragraphs,
+            inputs: inputs,
+            buttons: buttons
           };
         })()
         """
@@ -1963,6 +2187,10 @@ class BrowserActionRouter:
                 lines.append("Headings: " + " | ".join(data["headings"]))
             if data.get("paragraphs"):
                 lines.append("\nContent:\n" + "\n".join(data["paragraphs"]))
+            if data.get("buttons"):
+                lines.append("\nKey Buttons: " + ", ".join(data["buttons"]))
+            if data.get("inputs"):
+                lines.append("Form Inputs: " + ", ".join(data["inputs"]))
             return "\n".join(lines)
         except Exception as e:
             return f"Error reading page content: {e}"
@@ -1977,12 +2205,34 @@ def _copy_to_clipboard(text: str):
             win32clipboard.CloseClipboard()
             return
         except Exception:
-            pass
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
     try:
         import pyperclip
         pyperclip.copy(text)
     except Exception:
         pass
+
+
+def _read_clipboard() -> str:
+    if _WIN32:
+        try:
+            win32clipboard.OpenClipboard()
+            text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+            win32clipboard.CloseClipboard()
+            return text or ""
+        except Exception:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+    try:
+        import pyperclip
+        return pyperclip.paste() or ""
+    except Exception:
+        return ""
 
 
 def _log_chrome_action(action: str, target: str, source: str, locator: str, verif: str, duration_ms: int):
@@ -2003,17 +2253,63 @@ class DesktopFallbackRouter:
     """
 
     @staticmethod
-    def execute(action: str, target_query: str, text: str = "", click_type: str = "single") -> Tuple[bool, str]:
+    def execute(
+        action: str,
+        target_query: str,
+        text: str = "",
+        direction: str = "down",
+        click_type: str = "single"
+    ) -> Tuple[bool, str]:
         print(f"[DESKTOP] Routing '{action} {target_query}' via Windows Desktop Automation...")
+        action = action.lower().strip()
 
-        if action in ("type", "fill") and not target_query:
+        # ── SCROLL ──
+        if action == "scroll":
+            dir_str = (direction or target_query or "down").lower()
+            amount = 600 if dir_str == "up" else -600
+            pyautogui.scroll(amount)
+            return True, f"Scrolled desktop window {dir_str}."
+
+        # ── PRESS KEY / HOTKEY ──
+        if action in ("press_key", "key", "hotkey"):
+            key_str = (text or target_query).strip()
+            if "+" in key_str:
+                keys = [k.strip().lower() for k in key_str.split("+")]
+                pyautogui.hotkey(*keys)
+                return True, f"Pressed hotkey: {'+'.join(keys)}"
+            elif key_str:
+                pyautogui.press(key_str.lower())
+                return True, f"Pressed key: {key_str}"
+
+        # ── READ SCREEN VIA OCR ──
+        if action in ("read", "extract", "summary"):
+            ocr_text = DesktopFallbackRouter._read_desktop_ocr()
+            if ocr_text:
+                return True, f"Desktop Screen Content:\n{ocr_text}"
+            return False, "Could not extract text from current desktop screen."
+
+        # ── TYPE WITHOUT TARGET QUERY ──
+        if action in ("type", "fill", "write") and not target_query:
             pyautogui.write(text, interval=0.02)
+            if action == "enter" or "press enter" in (text or "").lower():
+                pyautogui.press("enter")
             return True, f"Typed text into active desktop window: '{text}'"
 
-        # Search UIA elements
+        # ── LOCATE DESKTOP ELEMENT VIA UIA OR OCR ──
         target_pt = DesktopFallbackRouter._find_uia_element(target_query)
         if not target_pt and _WINRT_OCR:
             target_pt = DesktopFallbackRouter._find_ocr_word(target_query)
+
+        # ── COPY ACTION ──
+        if action == "copy":
+            if target_pt:
+                pyautogui.moveTo(target_pt[0], target_pt[1], duration=0.15)
+                pyautogui.doubleClick()
+                time.sleep(0.1)
+            pyautogui.hotkey("ctrl", "c")
+            time.sleep(0.1)
+            copied = _read_clipboard()
+            return True, f"Copied desktop content to clipboard: '{copied}'"
 
         if not target_pt:
             return False, f"Could not locate desktop element '{target_query}'."
@@ -2029,11 +2325,13 @@ class DesktopFallbackRouter:
                 pyautogui.click()
             return True, f"Clicked desktop element '{target_query}' at ({cx}, {cy})."
 
-        if action in ("type", "fill"):
+        if action in ("type", "fill", "write", "enter"):
             pyautogui.moveTo(cx, cy, duration=0.15)
             pyautogui.click()
             time.sleep(0.1)
             pyautogui.write(text, interval=0.02)
+            if action == "enter" or "press enter" in target_query.lower() or "hit enter" in target_query.lower():
+                pyautogui.press("enter")
             return True, f"Clicked and typed '{text}' into '{target_query}'."
 
         if action == "hover":
@@ -2041,6 +2339,34 @@ class DesktopFallbackRouter:
             return True, f"Hovered over '{target_query}'."
 
         return False, f"Unsupported desktop action: '{action}'."
+
+    @staticmethod
+    def _read_desktop_ocr() -> str:
+        if not _WINRT_OCR or not _MSS:
+            return ""
+        import asyncio
+        try:
+            with mss.mss() as sct:
+                mon = sct.monitors[0]
+                shot = sct.grab(mon)
+                png_bytes = mss.tools.to_png(shot.rgb, shot.size)
+
+            async def _ocr():
+                stream = winrt_streams.InMemoryRandomAccessStream()
+                writer = winrt_streams.DataWriter(stream)
+                writer.write_bytes(png_bytes)
+                await writer.store_async()
+                await writer.flush_async()
+                stream.seek(0)
+                decoder = await winrt_imaging.BitmapDecoder.create_async(stream)
+                bitmap = await decoder.get_software_bitmap_async()
+                engine = winrt_ocr.OcrEngine.try_create_from_user_profile_languages()
+                res = await engine.recognize_async(bitmap)
+                return "\n".join(line.text for line in res.lines if line.text.strip())
+
+            return asyncio.run(_ocr())
+        except Exception:
+            return ""
 
     @staticmethod
     def _find_uia_element(query: str) -> Optional[Tuple[int, int]]:
@@ -2087,9 +2413,27 @@ class DesktopFallbackRouter:
                 engine = winrt_ocr.OcrEngine.try_create_from_user_profile_languages()
                 res = await engine.recognize_async(bitmap)
                 clean_q = query.lower().strip()
+
+                # 1. Search full line text for phrase match (multi-word support)
+                for line in res.lines:
+                    line_text = line.text.lower()
+                    if clean_q in line_text:
+                        matching_words = [w for w in line.words if w.text.lower() in clean_q or any(token in w.text.lower() for token in clean_q.split())]
+                        if matching_words:
+                            min_x = min(w.bounding_rect.x for w in matching_words)
+                            min_y = min(w.bounding_rect.y for w in matching_words)
+                            max_x = max(w.bounding_rect.x + w.bounding_rect.width for w in matching_words)
+                            max_y = max(w.bounding_rect.y + w.bounding_rect.height for w in matching_words)
+                            return (int((min_x + max_x) / 2), int((min_y + max_y) / 2))
+                        r = line.bounding_rect
+                        return (int(r.x + r.width / 2), int(r.y + r.height / 2))
+
+                # 2. Token overlap or individual word match
+                tokens = [t for t in clean_q.split() if len(t) > 1]
                 for line in res.lines:
                     for w in line.words:
-                        if clean_q in w.text.lower():
+                        w_low = w.text.lower()
+                        if clean_q == w_low or (tokens and all(tok in line.text.lower() for tok in tokens) and any(tok in w_low for tok in tokens)):
                             r = w.bounding_rect
                             return (int(r.x + r.width / 2), int(r.y + r.height / 2))
                 return None
@@ -2105,7 +2449,18 @@ def is_chrome_target(action: str, target: str, text: str) -> bool:
     """
     Determines whether command should be routed to Chrome vs Desktop.
     """
-    combined = f"{action} {target} {text}".lower()
+    action = (action or "").lower().strip()
+    target = (target or "").lower().strip()
+    text = (text or "").lower().strip()
+    combined = f"{action} {target} {text}"
+
+    # Browser navigation actions always go to Chrome
+    if action in ("open", "navigate", "goto", "new_tab", "switch_tab", "back", "go_back", "forward", "go_forward", "reload", "refresh"):
+        return True
+
+    # URL patterns always go to Chrome
+    if any(target.startswith(p) for p in ("http://", "https://", "www.", "file://")) or any(s in target for s in (".com", ".org", ".io", ".net", ".edu", ".gov")):
+        return True
 
     # Explicit browser keywords
     if any(k in combined for k in (
@@ -2172,6 +2527,7 @@ def route_screen_command(
         action=action,
         target_query=target_query,
         text=text,
+        direction=direction,
         click_type=click_type
     )
     return msg
@@ -2194,7 +2550,7 @@ PLUGIN = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "click | double_click | right_click | type | fill | copy | scroll | hover | find | highlight | read | open | switch_tab | new_tab | press_key | mark | circle | select_option | check"
+                "description": "click | double_click | right_click | type | fill | clear | copy | scroll | hover | find | highlight | read | open | switch_tab | new_tab | press_key | hotkey | mark | circle | select_option | check"
             },
             "target": {
                 "type": "STRING",
