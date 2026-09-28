@@ -50,6 +50,7 @@ from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
+    QGraphicsOpacityEffect,
 )
 
 try:
@@ -1405,8 +1406,8 @@ class _CameraPreview(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             _CameraPreview {{
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }}
         """)
@@ -1470,8 +1471,8 @@ class SetupOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             SetupOverlay {{
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }}
         """)
@@ -1607,18 +1608,21 @@ class HueWheel(QWidget):
         super().__init__(parent)
         self.setFixedSize(148, 148)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._hue  = 0.53
+        self._hue  = 0.5567
         self._drag = False
-        self.set_color(initial_hex)
+        self._current_hex = (initial_hex or DEFAULT_UI_COLOR).strip().lower()
+        self.set_color(self._current_hex)
 
     # ── API ──────────────────────────────────────────────────────────────────
     def color(self) -> str:
-        return QColor.fromHsvF(self._hue, 1.0, 1.0).name()
+        return QColor.fromHsvF(self._hue, 0.98, 0.78).name()
 
     def set_color(self, hex_str: str):
-        c = QColor((hex_str or "").strip())
+        hex_clean = (hex_str or "").strip().lower()
+        c = QColor(hex_clean)
         if c.isValid() and c.hsvHueF() >= 0:
             self._hue = c.hsvHueF()
+            self._current_hex = hex_clean
             self.update()
 
     # ── geometry helpers ─────────────────────────────────────────────────────
@@ -1649,11 +1653,11 @@ class HueWheel(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(rect)
 
-        # centre preview circle
-        preview = QColor.fromHsvF(self._hue, 1.0, 1.0)
+        # centre preview circle — accurately shows the actual current hex color
+        c_preview = QColor(self._current_hex) if getattr(self, '_current_hex', None) and QColor(self._current_hex).isValid() else QColor.fromHsvF(self._hue, 0.98, 0.78)
         inner   = rect.adjusted(30, 30, -30, -30)
-        p.setPen(QPen(qcol(C.BORDER_B), 1))
-        p.setBrush(QBrush(preview))
+        p.setPen(QPen(qcol("#CBD5E1"), 1.5))
+        p.setBrush(QBrush(c_preview))
         p.drawEllipse(inner)
 
         # draggable handle
@@ -1670,12 +1674,14 @@ class HueWheel(QWidget):
     def mousePressEvent(self, e):
         self._drag = True
         self._hue  = self._hue_from_pos(e.position())
+        self._current_hex = self.color()
         self.update()
         self.hue_picked.emit(self.color())
 
     def mouseMoveEvent(self, e):
         if self._drag:
             self._hue = self._hue_from_pos(e.position())
+            self._current_hex = self.color()
             self.update()
             self.hue_picked.emit(self.color())
 
@@ -1697,8 +1703,8 @@ class CustomizeOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
             CustomizeOverlay {
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }
         """)
@@ -1944,8 +1950,8 @@ class PluginManagerOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
             PluginManagerOverlay {
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }
         """)
@@ -2116,8 +2122,8 @@ class ConfirmBanner(_HudOverlay):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
             ConfirmBanner {
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }
         """)
@@ -2197,8 +2203,8 @@ class AudioDeviceOverlay(_HudOverlay):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
             AudioDeviceOverlay {
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }
         """)
@@ -2333,8 +2339,8 @@ class MemoryOverlay(_HudOverlay):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             MemoryOverlay {{
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }}
         """)
@@ -2527,8 +2533,8 @@ class ClipboardPanel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
             ClipboardPanel {
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }
         """)
@@ -2621,8 +2627,8 @@ class PluginSettingsOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
             PluginSettingsOverlay {
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }
         """)
@@ -2879,8 +2885,8 @@ class RemoteKeyOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
             RemoteKeyOverlay {
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }
         """)
@@ -3839,30 +3845,31 @@ class MainWindow(QMainWindow):
         w.mousePressEvent = _hdr_press
         w.mouseMoveEvent = _hdr_move
 
-        # Settings on the TOP LEFT — Premium Borderless Warm Beige
+        # Settings on the TOP LEFT — Modern Sleek HUD Button
         self._drawer_btn = QPushButton("⚙  Settings")
         self._drawer_btn.setFixedHeight(22)
         self._drawer_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.DemiBold))
         self._drawer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._drawer_btn.setToolTip("Settings & Controls")
-        self._drawer_btn.setStyleSheet("""
-            QPushButton {
+        self._drawer_btn.setStyleSheet(f"""
+            QPushButton {{
                 background: transparent;
-                color: #D6CEBE;
+                color: #CBD5E1;
                 border: none;
                 border-radius: 11px;
                 padding: 0 8px;
                 font-weight: 600;
                 letter-spacing: 0.3px;
-            }
-            QPushButton:hover {
-                background: rgba(226, 218, 203, 0.18);
-                color: #FFFDF8;
-            }
-            QPushButton:checked {
-                background: rgba(226, 218, 203, 0.28);
-                color: #FAF4E8;
-            }
+            }}
+            QPushButton:hover {{
+                background: rgba(255, 255, 255, 0.12);
+                color: #FFFFFF;
+            }}
+            QPushButton:checked {{
+                background: rgba(2, 132, 199, 0.22);
+                color: {C.PRI};
+                border: 1px solid rgba(2, 132, 199, 0.45);
+            }}
         """)
         self._drawer_btn.setCheckable(True)
         self._drawer_btn.clicked.connect(self._toggle_drawer)
@@ -3870,7 +3877,7 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
-        # Minimize on the TOP RIGHT — Borderless Warm Beige
+        # Minimize on the TOP RIGHT
         min_btn = QPushButton("─")
         min_btn.setFixedSize(22, 22)
         min_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
@@ -3879,19 +3886,19 @@ class MainWindow(QMainWindow):
         min_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
-                color: #D6CEBE;
+                color: #94A3B8;
                 border: none;
                 border-radius: 11px;
             }
             QPushButton:hover {
-                background: rgba(226, 218, 203, 0.20);
+                background: rgba(255, 255, 255, 0.12);
                 color: #FFFFFF;
             }
         """)
         min_btn.clicked.connect(self.showMinimized)
         lay.addWidget(min_btn)
 
-        # Close on the TOP RIGHT — Borderless Warm Beige with soft glow
+        # Close on the TOP RIGHT
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(22, 22)
         close_btn.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
@@ -3900,12 +3907,12 @@ class MainWindow(QMainWindow):
         close_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
-                color: #D6CEBE;
+                color: #94A3B8;
                 border: none;
                 border-radius: 11px;
             }
             QPushButton:hover {
-                background: rgba(239, 68, 68, 0.22);
+                background: rgba(239, 68, 68, 0.25);
                 color: #FCA5A5;
             }
         """)
@@ -4061,29 +4068,29 @@ class MainWindow(QMainWindow):
 
     def _build_quick_drawer(self) -> QWidget:
         """Floating overlay panel shown when the ⚙ header button is toggled."""
-        _BTN_STYLE_PRI = """
-            QPushButton {
-                background: #EFE9DD; color: #1C1917;
-                border: 1px solid #DCD5C7; border-radius: 12px;
-                text-align: left; padding: 0 10px; font-weight: 600;
-            }
-            QPushButton:hover { background: #E5DED0; color: #000000; border-color: #CEC5B5; }
+        _BTN_STYLE_PRI = f"""
+            QPushButton {{
+                background: {C.PRI_GHO}; color: {C.PRI};
+                border: 1px solid #BAE6FD; border-radius: 12px;
+                text-align: left; padding: 0 10px; font-weight: 600; font-size: 8pt;
+            }}
+            QPushButton:hover {{ background: {C.PRI}; color: #FFFFFF; border-color: {C.PRI}; }}
         """
         _BTN_STYLE_DIM = """
             QPushButton {
-                background: #FFFFFF; color: #38332E;
-                border: 1px solid #EFEAE1; border-radius: 12px;
-                text-align: left; padding: 0 10px; font-weight: 500;
+                background: #F8FAFC; color: #334155;
+                border: 1px solid #E2E8F0; border-radius: 12px;
+                text-align: left; padding: 0 10px; font-weight: 500; font-size: 8pt;
             }
-            QPushButton:hover { background: #F6F2EB; color: #1C1917; border-color: #E2DBD0; }
+            QPushButton:hover { background: #FFFFFF; color: #0F172A; border-color: #CBD5E1; }
         """
 
         w = QWidget(self.centralWidget())
         w.setObjectName("QuickDrawer")
         w.setStyleSheet("""
             QWidget#QuickDrawer {
-                background: #FDFBF7;
-                border: 1px solid #EAE4D9;
+                background: #FFFFFF;
+                border: 1px solid #CBD5E1;
                 border-radius: 16px;
             }
         """)
@@ -4096,8 +4103,8 @@ class MainWindow(QMainWindow):
         hdr_row = QHBoxLayout()
         hdr_row.setSpacing(4)
         hdr = QLabel("⚙  SETTINGS")
-        hdr.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-        hdr.setStyleSheet("color: #1C1917; background: transparent; font-weight: bold; letter-spacing: 0.5px;")
+        hdr.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        hdr.setStyleSheet("color: #0F172A; background: transparent; font-weight: bold; letter-spacing: 0.6px;")
         hdr_row.addWidget(hdr, 1)
 
         close_btn = QPushButton("✕")
@@ -4106,17 +4113,17 @@ class MainWindow(QMainWindow):
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet("""
             QPushButton {
-                background: transparent; color: #8C827A;
+                background: transparent; color: #64748B;
                 border: none; border-radius: 10px;
             }
-            QPushButton:hover { background: #EFE9DE; color: #1C1917; }
+            QPushButton:hover { background: #F1F5F9; color: #0F172A; }
         """)
         close_btn.clicked.connect(lambda: self._toggle_drawer(False))
         hdr_row.addWidget(close_btn)
         root_lay.addLayout(hdr_row)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #EDE7DC; margin: 0 0 2px 0;")
+        sep.setStyleSheet("color: #E2E8F0; margin: 0 0 3px 0;")
         root_lay.addWidget(sep)
 
         scroll = QScrollArea()
@@ -4126,13 +4133,13 @@ class MainWindow(QMainWindow):
         scroll.setStyleSheet("""
             QScrollArea { background: transparent; border: none; }
             QScrollBar:vertical {
-                background: #F7F3EC; width: 4px; border-radius: 2px;
+                background: transparent; width: 4px; border-radius: 2px;
             }
             QScrollBar::handle:vertical {
-                background: #D9D1C3; border-radius: 2px; min-height: 16px;
+                background: #CBD5E1; border-radius: 2px; min-height: 18px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #C4BAA9;
+                background: #94A3B8;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
@@ -4181,7 +4188,7 @@ class MainWindow(QMainWindow):
         pill_btn.setFont(QFont("Segoe UI", 7))
         pill_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         pill_btn.setStyleSheet(_BTN_STYLE_DIM)
-        pill_btn.clicked.connect(shrink_app_to_pill)
+        pill_btn.clicked.connect(lambda: (self._toggle_drawer(False), shrink_app_to_pill()))
         lay.addWidget(pill_btn)
 
         cust_btn = QPushButton("⚙  CUSTOMISE ASSISTANT")
@@ -4272,16 +4279,85 @@ class MainWindow(QMainWindow):
         root_lay.addWidget(scroll, 1)
         return w
 
-    def _toggle_drawer(self, checked: bool):
-        if hasattr(self, '_drawer_btn') and self._drawer_btn.isChecked() != checked:
-            self._drawer_btn.setChecked(checked)
-        if checked:
+    def _toggle_drawer(self, checked: bool | None = None):
+        if not hasattr(self, '_quick_drawer'):
+            return
+
+        if checked is None:
+            new_checked = not getattr(self, '_drawer_open', False)
+        else:
+            new_checked = bool(checked)
+
+        self._drawer_open = new_checked
+
+        if hasattr(self, '_drawer_btn') and self._drawer_btn.isChecked() != new_checked:
+            self._drawer_btn.setChecked(new_checked)
+
+        if not hasattr(self, '_drawer_eff') or self._quick_drawer.graphicsEffect() is None:
+            self._drawer_eff = QGraphicsOpacityEffect(self._quick_drawer)
+            self._quick_drawer.setGraphicsEffect(self._drawer_eff)
+
+        cw = self.centralWidget()
+        _W = min(250, cw.width() - 16)
+        _H = min(316, cw.height() - 44)
+        target_geo = QRect(8, 36, _W, _H)
+
+        if hasattr(self, '_drawer_anim') and self._drawer_anim.state() == QPropertyAnimation.State.Running:
+            self._drawer_anim.stop()
+
+        if new_checked:
             self._refresh_wake_btns()   # resolve wake state on open (lazy)
-            self._position_quick_drawer()
+            start_geo = QRect(8, 26, _W, _H)
+            self._quick_drawer.setGeometry(start_geo)
+            self._drawer_eff.setOpacity(0.0)
             self._quick_drawer.show()
             self._quick_drawer.raise_()
+
+            group = QParallelAnimationGroup(self)
+            a_geo = QPropertyAnimation(self._quick_drawer, b"geometry")
+            a_geo.setDuration(200)
+            a_geo.setStartValue(start_geo)
+            a_geo.setEndValue(target_geo)
+            a_geo.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+            a_op = QPropertyAnimation(self._drawer_eff, b"opacity")
+            a_op.setDuration(200)
+            a_op.setStartValue(0.0)
+            a_op.setEndValue(1.0)
+            a_op.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+            group.addAnimation(a_geo)
+            group.addAnimation(a_op)
+            self._drawer_anim = group
+            group.start()
         else:
-            self._quick_drawer.hide()
+            if not self._quick_drawer.isVisible() and not getattr(self, '_drawer_anim', None):
+                self._quick_drawer.hide()
+                return
+            start_geo = self._quick_drawer.geometry()
+            end_geo = QRect(start_geo.x(), max(0, start_geo.y() - 10), start_geo.width(), start_geo.height())
+
+            group = QParallelAnimationGroup(self)
+            a_geo = QPropertyAnimation(self._quick_drawer, b"geometry")
+            a_geo.setDuration(160)
+            a_geo.setStartValue(start_geo)
+            a_geo.setEndValue(end_geo)
+            a_geo.setEasingCurve(QEasingCurve.Type.InCubic)
+
+            a_op = QPropertyAnimation(self._drawer_eff, b"opacity")
+            a_op.setDuration(160)
+            a_op.setStartValue(self._drawer_eff.opacity())
+            a_op.setEndValue(0.0)
+            a_op.setEasingCurve(QEasingCurve.Type.InCubic)
+
+            group.addAnimation(a_geo)
+            group.addAnimation(a_op)
+            def _on_closed():
+                if not getattr(self, '_drawer_open', False):
+                    self._quick_drawer.hide()
+            group.finished.connect(_on_closed)
+            self._drawer_anim = group
+            group.start()
 
     def _position_quick_drawer(self):
         if not hasattr(self, '_quick_drawer'):
@@ -4289,6 +4365,8 @@ class MainWindow(QMainWindow):
         cw = self.centralWidget()
         _W = min(250, cw.width() - 16)
         _H = min(316, cw.height() - 44)
+        if hasattr(self, '_drawer_anim') and self._drawer_anim.state() == QPropertyAnimation.State.Running:
+            return
         self._quick_drawer.setGeometry(8, 36, _W, _H)
 
     def _build_input_row(self) -> QHBoxLayout:
@@ -4816,6 +4894,7 @@ class MainWindow(QMainWindow):
             self._remote_overlay.mark_connected()
 
     def _open_remote(self):
+        self._toggle_drawer(False)
         if not self.on_remote_clicked:
             self._log.append_log("SYS: Dashboard not running — remote unavailable.")
             return
@@ -4924,23 +5003,23 @@ class MainWindow(QMainWindow):
             return
         if enabled:
             self._autostart_btn.setText("◉  AUTO-START: ON")
-            self._autostart_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #001a08; color: {C.GREEN};
-                    border: 1px solid {C.GREEN_D}; border-radius: 13px;
-                    text-align: left; padding: 0 10px;
-                }}
-                QPushButton:hover {{ background: #002010; }}
+            self._autostart_btn.setStyleSheet("""
+                QPushButton {
+                    background: #ECFDF5; color: #059669;
+                    border: 1px solid #A7F3D0; border-radius: 12px;
+                    text-align: left; padding: 0 10px; font-weight: 600; font-size: 8pt;
+                }
+                QPushButton:hover { background: #D1FAE5; color: #047857; border-color: #6EE7B7; }
             """)
         else:
             self._autostart_btn.setText("◉  AUTO-START: OFF")
-            self._autostart_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent; color: {C.TEXT_DIM};
-                    border: 1px solid {C.BORDER}; border-radius: 13px;
-                    text-align: left; padding: 0 10px;
-                }}
-                QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
+            self._autostart_btn.setStyleSheet("""
+                QPushButton {
+                    background: #F8FAFC; color: #64748B;
+                    border: 1px solid #E2E8F0; border-radius: 12px;
+                    text-align: left; padding: 0 10px; font-weight: 500; font-size: 8pt;
+                }
+                QPushButton:hover { background: #FFFFFF; color: #0F172A; border-color: #CBD5E1; }
             """)
 
     def _toggle_brief(self):
@@ -4977,16 +5056,20 @@ class MainWindow(QMainWindow):
         if not hasattr(self, '_wake_btn'):
             return
         st = self._wake_state()
-        _on = f"""
-            QPushButton {{ background: #001a08; color: {C.GREEN};
-                border: 1px solid {C.GREEN_D}; border-radius: 13px;
-                text-align: left; padding: 0 10px; }}
-            QPushButton:hover {{ background: #002010; }}"""
-        _off = f"""
-            QPushButton {{ background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 13px;
-                text-align: left; padding: 0 10px; }}
-            QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}"""
+        _on = """
+            QPushButton {
+                background: #ECFDF5; color: #059669;
+                border: 1px solid #A7F3D0; border-radius: 12px;
+                text-align: left; padding: 0 10px; font-weight: 600; font-size: 8pt;
+            }
+            QPushButton:hover { background: #D1FAE5; color: #047857; border-color: #6EE7B7; }"""
+        _off = """
+            QPushButton {
+                background: #F8FAFC; color: #64748B;
+                border: 1px solid #E2E8F0; border-radius: 12px;
+                text-align: left; padding: 0 10px; font-weight: 500; font-size: 8pt;
+            }
+            QPushButton:hover { background: #FFFFFF; color: #0F172A; border-color: #CBD5E1; }"""
         self._wake_btn.setEnabled(True)
         if not st["ready"]:
             self._wake_btn.setText("⬇  WAKE WORD: DOWNLOAD")
@@ -5009,16 +5092,20 @@ class MainWindow(QMainWindow):
             return
         from core.hotkey import chord_label
         from memory.config_manager import get_push_to_talk_enabled
-        _on = f"""
-            QPushButton {{ background: #001a08; color: {C.GREEN};
-                border: 1px solid {C.GREEN_D}; border-radius: 13px;
-                text-align: left; padding: 0 10px; }}
-            QPushButton:hover {{ background: #002010; }}"""
-        _off = f"""
-            QPushButton {{ background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 13px;
-                text-align: left; padding: 0 10px; }}
-            QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}"""
+        _on = """
+            QPushButton {
+                background: #ECFDF5; color: #059669;
+                border: 1px solid #A7F3D0; border-radius: 12px;
+                text-align: left; padding: 0 10px; font-weight: 600; font-size: 8pt;
+            }
+            QPushButton:hover { background: #D1FAE5; color: #047857; border-color: #6EE7B7; }"""
+        _off = """
+            QPushButton {
+                background: #F8FAFC; color: #64748B;
+                border: 1px solid #E2E8F0; border-radius: 12px;
+                text-align: left; padding: 0 10px; font-weight: 500; font-size: 8pt;
+            }
+            QPushButton:hover { background: #FFFFFF; color: #0F172A; border-color: #CBD5E1; }"""
 
         ptt = get_push_to_talk_enabled()
         self._ptt_btn.setText(f"🎚  PUSH-TO-TALK: {chord_label()}" if ptt
@@ -5029,17 +5116,16 @@ class MainWindow(QMainWindow):
             "while you are not holding it." if ptt
             else "Hold a key to talk instead of streaming the mic continuously.")
 
-
     def _refresh_hud_btn(self):
         from memory.config_manager import get_hud_style
         face = get_hud_style() == "face"
-        # Neither state is "off", so both read as active — this is a choice
-        # between two things, not a switch with a disabled side.
         style = f"""
-            QPushButton {{ background: {C.PANEL2}; color: {C.PRI};
-                border: 1px solid {C.BORDER_A}; border-radius: 13px;
-                text-align: left; padding: 0 10px; }}
-            QPushButton:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}"""
+            QPushButton {{
+                background: {C.PRI_GHO}; color: {C.PRI};
+                border: 1px solid #BAE6FD; border-radius: 12px;
+                text-align: left; padding: 0 10px; font-weight: 600; font-size: 8pt;
+            }}
+            QPushButton:hover {{ background: #E0F2FE; color: {C.PRI}; border-color: {C.PRI}; }}"""
         self._hud_btn.setText("🧑  HUD: ANIMATED FACE" if face
                               else "◉  HUD: REACTOR CORE")
         self._hud_btn.setStyleSheet(style)
@@ -5172,28 +5258,29 @@ class MainWindow(QMainWindow):
             return
         if enabled:
             self._brief_btn.setText("☀  MORNING BRIEF: ON")
-            self._brief_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #001a08; color: {C.GREEN};
-                    border: 1px solid {C.GREEN_D}; border-radius: 13px;
-                    text-align: left; padding: 0 10px;
-                }}
-                QPushButton:hover {{ background: #002010; }}
+            self._brief_btn.setStyleSheet("""
+                QPushButton {
+                    background: #ECFDF5; color: #059669;
+                    border: 1px solid #A7F3D0; border-radius: 12px;
+                    text-align: left; padding: 0 10px; font-weight: 600; font-size: 8pt;
+                }
+                QPushButton:hover { background: #D1FAE5; color: #047857; border-color: #6EE7B7; }
             """)
         else:
             self._brief_btn.setText("☀  MORNING BRIEF: OFF")
-            self._brief_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent; color: {C.TEXT_DIM};
-                    border: 1px solid {C.BORDER}; border-radius: 13px;
-                    text-align: left; padding: 0 10px;
-                }}
-                QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
+            self._brief_btn.setStyleSheet("""
+                QPushButton {
+                    background: #F8FAFC; color: #64748B;
+                    border: 1px solid #E2E8F0; border-radius: 12px;
+                    text-align: left; padding: 0 10px; font-weight: 500; font-size: 8pt;
+                }
+                QPushButton:hover { background: #FFFFFF; color: #0F172A; border-color: #CBD5E1; }
             """)
 
     # ── Customization ────────────────────────────────────────────────────────────
 
     def _open_customize(self):
+        self._toggle_drawer(False)
         cfg = _read_full_config()
         if self._customize_overlay:
             self._customize_overlay.hide()
@@ -5268,7 +5355,7 @@ class MainWindow(QMainWindow):
             self.on_voice_change()
 
     def _centre_overlay(self, ov) -> None:
-        """Place a floating overlay in the middle of the HUD and show it."""
+        """Place a floating overlay in the middle of the HUD and show it with smooth entrance."""
         cw = self.centralWidget()
         max_w = min(316, cw.width() - 12)
         max_h = min(336, cw.height() - 12)
@@ -5283,17 +5370,42 @@ class MainWindow(QMainWindow):
         ov.adjustSize()
         ow = min(ov.width(), max_w)
         oh = min(ov.height(), max_h)
-        ov.setGeometry(
+        target_geo = QRect(
             max(6, (cw.width()  - ow) // 2),
             max(6, (cw.height() - oh) // 2),
             ow, oh,
         )
+        start_geo = QRect(target_geo.x(), target_geo.y() + 8, ow, oh)
+
+        eff = QGraphicsOpacityEffect(ov)
+        ov.setGraphicsEffect(eff)
+        eff.setOpacity(0.0)
+        ov.setGeometry(start_geo)
         ov.show()
         ov.raise_()
+
+        group = QParallelAnimationGroup(ov)
+        a_geo = QPropertyAnimation(ov, b"geometry")
+        a_geo.setDuration(200)
+        a_geo.setStartValue(start_geo)
+        a_geo.setEndValue(target_geo)
+        a_geo.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        a_op = QPropertyAnimation(eff, b"opacity")
+        a_op.setDuration(200)
+        a_op.setStartValue(0.0)
+        a_op.setEndValue(1.0)
+        a_op.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        group.addAnimation(a_geo)
+        group.addAnimation(a_op)
+        ov._entrance_anim = group
+        group.start()
 
     # ── Audio devices ────────────────────────────────────────────────────────
 
     def _open_audio_devices(self):
+        self._toggle_drawer(False)
         ov = AudioDeviceOverlay(parent=self.centralWidget())
         ov.picked.connect(self._on_audio_devices_applied)
         self._centre_overlay(ov)
@@ -5307,6 +5419,7 @@ class MainWindow(QMainWindow):
     # ── Memory panel ─────────────────────────────────────────────────────────
 
     def _open_memory_panel(self):
+        self._toggle_drawer(False)
         ov = MemoryOverlay(parent=self.centralWidget())
         self._centre_overlay(ov)
         self._memory_overlay = ov
@@ -5339,6 +5452,7 @@ class MainWindow(QMainWindow):
             self._log.append_log(f"ERR: Confirmation failed — {e}")
 
     def _open_plugin_manager(self):
+        self._toggle_drawer(False)
         plugins = self.get_plugins() if self.get_plugins else []
         cw = self.centralWidget()
         ov = PluginManagerOverlay(plugins, parent=cw)
@@ -5346,6 +5460,7 @@ class MainWindow(QMainWindow):
         self._plugin_manager_overlay = ov   # keep a reference so it isn't GC'd
 
     def _open_plugin_settings(self):
+        self._toggle_drawer(False)
         sections = self.get_plugin_settings() if self.get_plugin_settings else []
         cw = self.centralWidget()
         ov = PluginSettingsOverlay(sections, parent=cw)
