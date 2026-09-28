@@ -2503,17 +2503,48 @@ class DesktopFallbackRouter:
         clean = query.lower().strip()
         try:
             desktop = PywinDesktop(backend="uia")
+            
+            # Prioritize active foreground window first for instant speed and accuracy
+            foreground_win = None
+            try:
+                import win32gui
+                hwnd = win32gui.GetForegroundWindow()
+                if hwnd:
+                    foreground_win = desktop.window(handle=hwnd)
+            except Exception:
+                pass
+
+            windows_to_check = []
+            if foreground_win:
+                try:
+                    if foreground_win.is_visible():
+                        windows_to_check.append(foreground_win)
+                except Exception:
+                    pass
+
             for win in desktop.windows():
-                if not win.is_visible():
+                try:
+                    if win.is_visible() and (not foreground_win or win.handle != foreground_win.handle):
+                        windows_to_check.append(win)
+                except Exception:
                     continue
-                for ctrl in win.descendants():
-                    try:
-                        txt = (ctrl.window_text() or "").lower()
-                        if clean in txt and ctrl.is_visible():
-                            rect = ctrl.rectangle()
-                            return (rect.mid_point().x, rect.mid_point().y)
-                    except Exception:
-                        continue
+
+            for win in windows_to_check:
+                try:
+                    for ctrl in win.descendants():
+                        try:
+                            ctrl_name = getattr(ctrl.element_info, "name", "") or ""
+                            win_text = ctrl.window_text() or ""
+                            auto_id = getattr(ctrl.element_info, "automation_id", "") or ""
+                            haystack = f"{ctrl_name} {win_text} {auto_id}".lower()
+                            if clean in haystack and ctrl.is_visible():
+                                rect = ctrl.rectangle()
+                                if rect.width() > 0 and rect.height() > 0:
+                                    return (rect.mid_point().x, rect.mid_point().y)
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
         except Exception:
             pass
         return None
