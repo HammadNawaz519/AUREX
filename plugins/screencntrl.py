@@ -1664,7 +1664,7 @@ class TargetResolver:
                 f'{{"found": true, "box_2d": [ymin, xmin, ymax, xmax], "description": "brief", "confidence": 0.9}}\n'
                 f"Coordinates are normalized 0 to 1000."
             )
-            vlm_text = gemini.generate_image_response(pil_img, prompt)
+            vlm_text = gemini.text([prompt, pil_img], tier=gemini.FAST, timeout_ms=8000) or ""
             vlm_clean = re.sub(r"^```[a-zA-Z]*\n?", "", vlm_text.strip())
             vlm_clean = re.sub(r"\n?```$", "", vlm_clean).strip()
             data = json.loads(vlm_clean)
@@ -2423,10 +2423,61 @@ class DesktopFallbackRouter:
                 pyautogui.press("enter")
             return True, f"Typed text into active desktop window: '{text}'"
 
-        # ── LOCATE DESKTOP ELEMENT VIA UIA OR OCR ──
-        target_pt = DesktopFallbackRouter._find_uia_element(target_query)
-        if not target_pt and _WINRT_OCR:
-            target_pt = DesktopFallbackRouter._find_ocr_word(target_query)
+        # ── LOCATE TARGET POINT (COORDINATES / RELATIVE POSITION / UIA / OCR / VISION) ──
+        target_pt = None
+        sw, sh = pyautogui.size()
+        tq = (target_query or "").strip()
+
+        # 1. Direct Coordinate parsing: e.g. "(500, 300)", "500, 300", "x=500 y=300", "500 300"
+        m_coord = re.search(r"\(?\s*(\d{1,5})\s*[,x\s]\s*(\d{1,5})\s*\)?", tq)
+        if m_coord:
+            try:
+                cx = int(m_coord.group(1))
+                cy = int(m_coord.group(2))
+                if 0 <= cx <= sw and 0 <= cy <= sh:
+                    target_pt = (cx, cy)
+            except Exception:
+                pass
+
+        # 2. Relative Percentages: e.g. "50%, 50%", "50% 50%"
+        if not target_pt and "%" in tq:
+            m_pct = re.search(r"(\d{1,3})%\s*[,x\s]\s*(\d{1,3})%", tq)
+            if m_pct:
+                target_pt = (int(int(m_pct.group(1)) / 100.0 * sw), int(int(m_pct.group(2)) / 100.0 * sh))
+
+        # 3. Named screen positions
+        if not target_pt:
+            tq_lower = tq.lower()
+            if tq_lower in ("center", "middle", "center of screen", "middle of screen", "screen center"):
+                target_pt = (sw // 2, sh // 2)
+            elif "top left" in tq_lower:
+                target_pt = (int(sw * 0.15), int(sh * 0.15))
+            elif "top right" in tq_lower:
+                target_pt = (int(sw * 0.85), int(sh * 0.15))
+            elif "bottom left" in tq_lower:
+                target_pt = (int(sw * 0.15), int(sh * 0.85))
+            elif "bottom right" in tq_lower:
+                target_pt = (int(sw * 0.85), int(sh * 0.85))
+            elif "top center" in tq_lower or "top middle" in tq_lower:
+                target_pt = (sw // 2, int(sh * 0.15))
+            elif "bottom center" in tq_lower or "bottom middle" in tq_lower:
+                target_pt = (sw // 2, int(sh * 0.85))
+
+        # 4. Fallback for empty target or "here" / "current"
+        if not target_pt and tq_lower in ("", "here", "current", "screen", "this"):
+            target_pt = pyautogui.position()
+
+        # 5. Locate via Windows UI Automation (active foreground window first)
+        if not target_pt and tq:
+            target_pt = DesktopFallbackRouter._find_uia_element(tq)
+
+        # 6. Locate via Local WinRT OCR
+        if not target_pt and tq and _WINRT_OCR:
+            target_pt = DesktopFallbackRouter._find_ocr_word(tq)
+
+        # 7. Locate via AI Vision Grounding (sees icons, buttons, thumbnails, visual targets)
+        if not target_pt and tq:
+            target_pt = DesktopFallbackRouter._find_desktop_vision_point(tq)
 
         # ── COPY ACTION ──
         if action == "copy":
@@ -2440,10 +2491,10 @@ class DesktopFallbackRouter:
             return True, f"Copied desktop content to clipboard: '{copied}'"
 
         if not target_pt:
-            return False, f"Could not locate desktop element '{target_query}'."
+            return False, f"Could not locate '{target_query}' on the screen. Try providing coordinates or screen area."
 
         cx, cy = target_pt
-        if action in ("click", "double_click", "right_click", "press"):
+        if action in ("click", "double_click", "right_click", "press", "tap"):
             pyautogui.moveTo(cx, cy, duration=0.15)
             if action == "double_click" or click_type == "double":
                 pyautogui.doubleClick()
@@ -2451,7 +2502,8 @@ class DesktopFallbackRouter:
                 pyautogui.rightClick()
             else:
                 pyautogui.click()
-            return True, f"Clicked desktop element '{target_query}' at ({cx}, {cy})."
+            target_label = target_query or f"position ({cx}, {cy})"
+            return True, f"Clicked '{target_label}' at ({cx}, {cy}) on screen."
 
         if action in ("type", "fill", "write", "enter"):
             pyautogui.moveTo(cx, cy, duration=0.15)
@@ -2464,9 +2516,50 @@ class DesktopFallbackRouter:
 
         if action == "hover":
             pyautogui.moveTo(cx, cy, duration=0.2)
-            return True, f"Hovered over '{target_query}'."
+            return True, f"Hovered over '{target_query}' at ({cx}, {cy})."
 
         return False, f"Unsupported desktop action: '{action}'."
+
+    @staticmethod
+    def _find_desktop_vision_point(query: str) -> Optional[Tuple[int, int]]:
+        """
+        Visual Grounding on the real desktop screen using Gemini Vision.
+        Captures the screen and asks Gemini for normalized coordinates of the target.
+        Works for icons, video thumbnails, buttons without text, play buttons, images, etc.
+        """
+        if not _MSS or not _PIL:
+            return None
+        try:
+            with mss.mss() as sct:
+                mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                shot = sct.grab(mon)
+                img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+
+            sw, sh = pyautogui.size()
+            img.thumbnail((1280, 720), Image.Resampling.BILINEAR)
+
+            prompt = (
+                f"You are a computer screen grounding engine. The user wants to click or interact with: '{query}'.\n"
+                f"Find the location of '{query}' on this screen.\n"
+                f"Return ONLY valid JSON: {{\"found\": true, \"x\": <0-1000>, \"y\": <0-1000>}} where x and y are "
+                f"normalized coordinates from 0 to 1000 representing the center of '{query}'.\n"
+                f"If not found on screen, return: {{\"found\": false}}"
+            )
+            vlm_text = gemini.text([prompt, img], tier=gemini.FAST, timeout_ms=8000)
+            if not vlm_text:
+                return None
+            clean_json = re.sub(r"^```[a-zA-Z]*\n?", "", vlm_text.strip())
+            clean_json = re.sub(r"\n?```$", "", clean_json).strip()
+            data = json.loads(clean_json)
+
+            if data.get("found") and "x" in data and "y" in data:
+                cx = int((float(data["x"]) / 1000.0) * sw)
+                cy = int((float(data["y"]) / 1000.0) * sh)
+                print(f"[VISION_GROUNDING] Located '{query}' at desktop coordinates ({cx}, {cy})")
+                return (cx, cy)
+        except Exception as e:
+            print(f"[VISION_GROUNDING_ERROR] {e}")
+        return None
 
     @staticmethod
     def _read_desktop_ocr() -> str:
@@ -2624,32 +2717,32 @@ def is_chrome_target(action: str, target: str, text: str) -> bool:
     ):
         return True
 
+def is_chrome_target(action: str, target_query: str, text: str) -> bool:
+    action = (action or "").lower().strip()
+    target = (target_query or "").lower().strip()
+    combined = f"{action} {target} {text}".lower()
+
+    # Browser navigation commands always go to browser
+    if action in ("open", "navigate", "goto", "visit", "switch_tab", "new_tab", "close_tab", "list_tabs"):
+        return True
+
     # URL patterns always go to Chrome
     if any(target.startswith(p) for p in ("http://", "https://", "www.", "file://")) or any(s in target for s in (".com", ".org", ".io", ".net", ".edu", ".gov")):
         return True
 
-    # Explicit browser keywords
-    if any(k in combined for k in (
-        "chrome", "google", "browser", "website", "web page", "webpage", "url", "tab",
-        "youtube", "github", "search in", "question", "option", "mcq", "localhost",
-        "mark", "circle", "answer", "choice", "screenshot", "screen shot",
-        "what is on", "what's on", "list tab", "open tab", "close tab", "current page"
-    )):
-        return True
-
-    # Active foreground window check
-    if _WIN32:
+    # If Chrome CDP is ALREADY alive and connected to a real page, use it
+    cdp = ChromeCDPManager.get_instance()
+    if cdp.is_alive():
         try:
-            hwnd = win32gui.GetForegroundWindow()
-            title = win32gui.GetWindowText(hwnd) or ""
-            cls = win32gui.GetClassName(hwnd) or ""
-            if "Chrome" in cls or "Chrome" in title:
-                return True
+            if cdp.active_page and not cdp.active_page.is_closed():
+                u = cdp.active_page.url or ""
+                if u and not u.startswith("about:"):
+                    return True
         except Exception:
             pass
 
-    # If Chrome CDP is already alive, route to it by default
-    if ChromeCDPManager.get_instance().is_alive():
+    # Only route to browser if user explicitly asks for Chrome / browser
+    if "in chrome" in combined or "in browser" in combined:
         return True
 
     return False
@@ -2681,15 +2774,17 @@ def route_screen_command(
                 click_type=click_type,
                 highlight=highlight
             )
-            if explain:
-                return f"{msg}\n[Chrome Engine | Source: {meta.get('source', 'DOM')} | Locator: {meta.get('locator_str', 'N/A')}]"
-            return msg
+            if ok:
+                if explain:
+                    return f"{msg}\n[Chrome Engine | Source: {meta.get('source', 'DOM')} | Locator: {meta.get('locator_str', 'N/A')}]"
+                return msg
+            else:
+                print(f"[CHROME] Target '{target_query}' not resolved via Chrome DOM ({msg}). Falling back to desktop screen automation...")
         except Exception as e:
             print(f"[CHROME_ERROR] Falling back to desktop automation: {e}")
-            # Fall through to desktop fallback
             pass
 
-    # Desktop Fallback
+    # Desktop Fallback (UIA + OCR + Coordinates + Vision Grounding)
     ok, msg = DesktopFallbackRouter.execute(
         action=action,
         target_query=target_query,

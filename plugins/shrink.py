@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
+from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, QObject, pyqtSignal
 from PyQt6.QtGui import (
     QPainter, QBrush, QColor, QPen, QRadialGradient, QFont
 )
@@ -200,7 +200,33 @@ class ShrinkPillWindow(QWidget):
         painter.drawText(QRectF(0, h - 23, w, 14), Qt.AlignmentFlag.AlignCenter, "AUREX")
 
 
-# ── Internal Window Control (Runs on Qt Main Thread) ─────────────────────────
+# ── Internal Window Control (Runs on Qt Main Thread via Signal Bridge) ──────
+
+class _ShrinkBridge(QObject):
+    shrink_sig = pyqtSignal()
+    restore_sig = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.shrink_sig.connect(_do_shrink)
+        self.restore_sig.connect(_do_restore)
+
+
+_bridge: Optional[_ShrinkBridge] = None
+
+
+def _get_bridge() -> _ShrinkBridge:
+    global _bridge
+    if _bridge is None:
+        _bridge = _ShrinkBridge()
+        app = QApplication.instance()
+        if app and app.thread():
+            try:
+                _bridge.moveToThread(app.thread())
+            except Exception:
+                pass
+    return _bridge
+
 
 def _find_main_window() -> Optional[QWidget]:
     global _main_window
@@ -222,7 +248,7 @@ def _find_main_window() -> Optional[QWidget]:
             if w.inherits("QMainWindow") or "MainWindow" in type(w).__name__:
                 _main_window = w
                 return w
-    return None
+    return _main_window
 
 
 def _do_shrink():
@@ -230,6 +256,12 @@ def _do_shrink():
     main_win = _find_main_window()
     if main_win is not None:
         main_win.hide()
+
+    app = QApplication.instance()
+    if app:
+        for w in app.topLevelWidgets():
+            if (w.inherits("QMainWindow") or "MainWindow" in type(w).__name__) and w != _pill_window:
+                w.hide()
 
     if _pill_window is None:
         _pill_window = ShrinkPillWindow()
@@ -251,16 +283,24 @@ def _do_restore():
         main_win.show()
         main_win.raise_()
         main_win.activateWindow()
+    else:
+        app = QApplication.instance()
+        if app:
+            for w in app.topLevelWidgets():
+                if (w.inherits("QMainWindow") or "MainWindow" in type(w).__name__) and w != _pill_window:
+                    w.show()
+                    w.raise_()
+                    w.activateWindow()
 
 
-# ── Public API (Safe to call from any thread or button) ──────────────────────
+# ── Public API (100% thread-safe to call from any background worker thread) ──
 
 def shrink() -> bool:
     """Shrink AUREX into the compact floating pill bubble."""
     app = QApplication.instance()
     if not app:
         return False
-    QTimer.singleShot(0, _do_shrink)
+    _get_bridge().shrink_sig.emit()
     return True
 
 
@@ -269,7 +309,7 @@ def restore() -> bool:
     app = QApplication.instance()
     if not app:
         return False
-    QTimer.singleShot(0, _do_restore)
+    _get_bridge().restore_sig.emit()
     return True
 
 

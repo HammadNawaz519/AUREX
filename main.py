@@ -353,9 +353,9 @@ TOOL_DECLARATIONS = [
         "description": (
             "Captures the screen or webcam image and lets you analyze it. "
             "MUST be called when user asks what is on screen, what you see, "
-            "look at camera, analyze my screen, etc. "
-            "You have NO visual ability without this tool. "
-            "After the image is captured it is sent directly to you — describe what you see and answer the user's question. "
+            "look at camera, describe my screen, etc. "
+            "Do NOT call this tool for clicking, typing, tapping, or interacting with the screen — "
+            "use screencntrl for all mouse clicks, typing, and screen interactions. "
             "When using camera: the live view stays open until user says close it or calls close_camera."
         ),
         "parameters": {
