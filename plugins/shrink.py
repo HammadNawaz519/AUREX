@@ -8,7 +8,10 @@ and seamless restoring back to the full window.
 
 from __future__ import annotations
 
+import ctypes
 import math
+import sys
+import time
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, QObject, pyqtSignal
@@ -21,6 +24,7 @@ from PyQt6.QtWidgets import QWidget, QApplication
 # ── Global Singleton Instances ───────────────────────────────────────────────
 _pill_window: Optional[ShrinkPillWindow] = None
 _main_window: Optional[QWidget] = None
+_is_transitioning: bool = False
 
 
 class ShrinkPillWindow(QWidget):
@@ -42,6 +46,7 @@ class ShrinkPillWindow(QWidget):
         self.setToolTip("AUREX Pill Mode\n• Click or Double-click to restore\n• Drag to reposition")
 
         self._phase: float = 0.0
+        self._restoring: bool = False
         self._timer: QTimer = QTimer(self)
         self._timer.setInterval(16)  # ~60 fps smooth wave
         self._timer.timeout.connect(self._on_tick)
@@ -94,8 +99,14 @@ class ShrinkPillWindow(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             if not getattr(self, "_dragging", False):
-                # Direct click without dragging -> restore full window
-                restore()
+                if not getattr(self, "_restoring", False):
+                    self._restoring = True
+                    # Cleanly release any mouse grab and defer restore to the next event loop tick
+                    try:
+                        self.releaseMouse()
+                    except Exception:
+                        pass
+                    QTimer.singleShot(10, restore)
             else:
                 # Snap to nearest screen edge
                 self._snap_to_edge()
@@ -121,7 +132,13 @@ class ShrinkPillWindow(QWidget):
         self.move(snap_x, snap_y)
 
     def mouseDoubleClickEvent(self, event):
-        restore()
+        if not getattr(self, "_restoring", False):
+            self._restoring = True
+            try:
+                self.releaseMouse()
+            except Exception:
+                pass
+            QTimer.singleShot(10, restore)
         event.accept()
 
     def paintEvent(self, event):
@@ -252,45 +269,93 @@ def _find_main_window() -> Optional[QWidget]:
 
 
 def _do_shrink():
-    global _pill_window, _main_window
-    main_win = _find_main_window()
-    if main_win is not None:
-        main_win.hide()
+    global _pill_window, _main_window, _is_transitioning
+    if _is_transitioning:
+        return
+    _is_transitioning = True
+    try:
+        main_win = _find_main_window()
+        if main_win is not None:
+            # If quick drawer is open, close/hide it so no animation gets stuck
+            if hasattr(main_win, "_quick_drawer") and main_win._quick_drawer is not None:
+                try:
+                    main_win._quick_drawer.hide()
+                    main_win._drawer_open = False
+                except Exception:
+                    pass
+            main_win.hide()
 
-    app = QApplication.instance()
-    if app:
-        for w in app.topLevelWidgets():
-            if (w.inherits("QMainWindow") or "MainWindow" in type(w).__name__) and w != _pill_window:
-                w.hide()
-
-    if _pill_window is None:
-        _pill_window = ShrinkPillWindow()
-
-    _pill_window.show()
-    _pill_window.raise_()
-    _pill_window.activateWindow()
-    _pill_window.start_wave()
-
-
-def _do_restore():
-    global _pill_window, _main_window
-    if _pill_window is not None:
-        _pill_window.stop_wave()
-        _pill_window.hide()
-
-    main_win = _find_main_window()
-    if main_win is not None:
-        main_win.show()
-        main_win.raise_()
-        main_win.activateWindow()
-    else:
         app = QApplication.instance()
         if app:
             for w in app.topLevelWidgets():
                 if (w.inherits("QMainWindow") or "MainWindow" in type(w).__name__) and w != _pill_window:
-                    w.show()
-                    w.raise_()
-                    w.activateWindow()
+                    w.hide()
+
+        if _pill_window is None:
+            _pill_window = ShrinkPillWindow()
+
+        _pill_window._restoring = False
+        _pill_window.show()
+        _pill_window.raise_()
+        _pill_window.activateWindow()
+        _pill_window.start_wave()
+    finally:
+        _is_transitioning = False
+
+
+def _do_restore():
+    global _pill_window, _main_window, _is_transitioning
+    if _is_transitioning:
+        return
+    _is_transitioning = True
+    try:
+        if _pill_window is not None:
+            _pill_window.stop_wave()
+            _pill_window.hide()
+
+        main_win = _find_main_window()
+        if main_win is not None:
+            # Un-minimize and restore normal window state
+            main_win.setWindowState(
+                (main_win.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive
+            )
+            main_win.showNormal()
+            main_win.raise_()
+            main_win.activateWindow()
+
+            if sys.platform == "win32":
+                try:
+                    hwnd = int(main_win.winId())
+                    user32 = ctypes.windll.user32
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+                    user32.SetForegroundWindow(hwnd)
+                    user32.BringWindowToTop(hwnd)
+                except Exception:
+                    pass
+
+            if hasattr(main_win, "_apply_window_mask"):
+                main_win._apply_window_mask()
+
+            if hasattr(main_win, "hud") and main_win.hud is not None:
+                main_win.hud._step_t = time.time()
+                main_win.hud._last_t = time.time()
+                main_win.hud.update()
+
+            main_win.update()
+        else:
+            app = QApplication.instance()
+            if app:
+                for w in app.topLevelWidgets():
+                    if (w.inherits("QMainWindow") or "MainWindow" in type(w).__name__) and w != _pill_window:
+                        w.setWindowState(
+                            (w.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive
+                        )
+                        w.showNormal()
+                        w.raise_()
+                        w.activateWindow()
+    finally:
+        _is_transitioning = False
 
 
 # ── Public API (100% thread-safe to call from any background worker thread) ──

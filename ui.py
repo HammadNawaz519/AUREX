@@ -1116,12 +1116,6 @@ class LogWidget(QTextEdit):
 
     def append_log(self, text: str):
         self._sig.emit(text)
-        try:
-            win = self.window()
-            if hasattr(win, '_check_circle_commands'):
-                win._check_circle_commands(text)
-        except Exception:
-            pass
 
     def _enqueue(self, text: str):
         self._queue.append(text)
@@ -3735,6 +3729,18 @@ class MainWindow(QMainWindow):
         else:
             self.showFullScreen()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_window_mask()
+        if hasattr(self, 'hud') and self.hud is not None:
+            self.hud._step_t = time.time()
+            self.hud._last_t = time.time()
+            self.hud.update()
+        self.update()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._apply_window_mask()
@@ -5558,21 +5564,23 @@ class MainWindow(QMainWindow):
 
     def _check_circle_commands(self, text: str) -> bool:
         tl = (text or "").lower().strip()
-        shrink_triggers = [
+        if not tl:
+            return False
+        shrink_triggers = {
             "chote hojao", "chotay hojao", "chote ho jao", "chotay ho jao",
             "chota hojao", "chhota hojao", "chhota ho jao",
-            "pill", "mini pill", "small", "small pill", "shrink", "circle mode",
-            "mini mode", "bubble mode", "stick to desktop", "desktop"
-        ]
-        restore_triggers = [
+            "pill", "mini pill", "small pill", "shrink", "circle mode",
+            "mini mode", "bubble mode", "desktop pill", "pill mode"
+        }
+        restore_triggers = {
             "bade hojao", "baray hojao", "bade ho jao", "baray ho jao",
             "bada hojao", "expand", "restore", "full mode", "normal mode",
-            "wapis aao", "wapas aao", "wapis hojao"
-        ]
-        if any(st in tl for st in shrink_triggers):
+            "full window", "wapis aao", "wapas aao", "wapis hojao", "wapas ao"
+        }
+        if tl in shrink_triggers or any(tl.startswith(c) or tl.endswith(c) for c in shrink_triggers):
             shrink_app_to_pill()
             return True
-        if any(rt in tl for rt in restore_triggers):
+        if tl in restore_triggers or any(tl.startswith(c) or tl.endswith(c) for c in restore_triggers):
             restore_app_from_pill()
             return True
         return False
