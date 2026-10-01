@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from memory.config_manager import get_plugin_enabled, get_plugin_config
+import core.safety as _safety
 
 _NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 _DEFAULT_PARAMS = {"type": "OBJECT", "properties": {}}
@@ -90,6 +91,9 @@ class PluginRegistry:
             return f"Plugin '{name}' is not available."
         if not get_plugin_enabled(name):
             return f"The '{name}' plugin is currently disabled."
+        err = _safety.guard_action_call(name, parameters)
+        if err:
+            return err
         try:
             return _call_run(rec.run, parameters, player, session_memory) or "Done."
         except Exception as e:

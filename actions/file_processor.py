@@ -44,6 +44,7 @@ import xml.etree.ElementTree as ET
 
 # Model choice, timeout and fallback ladder all live in core/gemini.py.
 from core import gemini
+from core.safety import is_c_drive, is_d_drive, MSG_C_DRIVE_BLOCKED, MSG_D_DELETE_BLOCKED
 
 # Reuse the file controller's path helpers when available (same Desktop/OneDrive logic).
 try:
@@ -1698,6 +1699,13 @@ _ALIASES = {
 def file_processor(parameters: dict = None, player=None, speak=None) -> str:
     global _LAST_FILE
     parameters = dict(parameters or {})
+    action = (parameters.get("action") or "").lower().strip().replace(" ", "_")
+    if action in ("delete", "remove", "unlink", "trash", "recycle", "wipe"):
+        return MSG_D_DELETE_BLOCKED
+
+    raw_check = parameters.get("path") or parameters.get("file") or ""
+    if raw_check and is_c_drive(raw_check):
+        return MSG_C_DRIVE_BLOCKED
 
     try:
         path, note = _locate(parameters)
@@ -1705,6 +1713,8 @@ def file_processor(parameters: dict = None, player=None, speak=None) -> str:
         return f"FAILED: could not look for the file: {e}"
     if path is None:
         return note                                    # NEED_INFO …
+    if is_c_drive(path):
+        return MSG_C_DRIVE_BLOCKED
     if not path.is_file():
         return f"FAILED: '{path}' is not a file."
     if _fc_safe is not None and not _fc_safe(path):

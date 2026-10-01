@@ -57,3 +57,6 @@ screenshots/
 # Extra safety — if a standalone token file is ever added it won't slip through.
 spotify_tokens.json
 .spotify/
+
+# ── Temporary probe files ───────────────────────────────────────────────────────
+temp_probes/

@@ -1,6 +1,8 @@
 import platform as _platform
 import subprocess as _subprocess
 
+import core.safety as _safety
+
 # ── Nuclear: force CREATE_NO_WINDOW on EVERY subprocess call on Windows ───────
 # This patches Popen itself, so no per-file flag is needed anywhere.
 if _platform.system() == "Windows":
@@ -8,9 +10,12 @@ if _platform.system() == "Windows":
 
     class _Popen(_OrigPopen):
         def __init__(self, args, **kw):
+            err = _safety.validate_command_line(args, kw.get("cwd"))
+            if err:
+                raise PermissionError(err)
             kw["creationflags"] = kw.get("creationflags", 0) | _subprocess.CREATE_NO_WINDOW
             kw.pop("startupinfo", None)   # drop any stale/shared STARTUPINFO
-            super().__init__(args, **                       kw)
+            super().__init__(args, **kw)
 
     _subprocess.Popen = _Popen
 

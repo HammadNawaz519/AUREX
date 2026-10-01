@@ -1,0 +1,605 @@
+================================================================================
+                        AUREX (MARK LIV) — SYSTEM BLUEPRINT
+       The Ultimate Cross-Platform Personal AI Assistant — By Hammad Nawaz
+================================================================================
+Generated Document: aurex.txt
+Date: 2026-10-02
+Architecture: Gemini Live Native Voice + Software Hologram + Computer Use
+Operating Systems Supported: Windows 10/11, macOS (Apple Silicon / Intel), Linux
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. EXECUTIVE SUMMARY & DESIGN PHILOSOPHY
+2. PROJECT REPOSITORY DIRECTORY STRUCTURE
+3. CORE ARCHITECTURE & LIFECYCLE (main.py)
+4. HOLOGRAPHIC AVATAR & VISEME SUBSYSTEM (core/avatar.py, core/avatar_mesh.py, core/viseme.py)
+5. ACOUSTIC PIPELINE & AUDIO CONTROL (core/echo.py, core/audio_devices.py, core/wake_word.py)
+6. SAFETY & REVERSIBILITY FRAMEWORK (core/confirm.py, core/undo.py)
+7. GEMINI LLM CLIENTS & RESILIENCE LADDER (core/gemini.py, core/llm_client.py)
+8. DISCOVERY ENGINES & PLUGIN EXTENSIBILITY (core/action_loader.py, core/plugin_loader.py)
+9. SYSTEM PROTOCOLS & RUNTIME SELF-KNOWLEDGE (core/prompt.txt)
+10. FULL ACTIONS INVENTORY (actions/*.py)
+    10.1. File System Controller & Operations (actions/file_controller.py)
+    10.2. Universal File Processor & Document Intel (actions/file_processor.py)
+    10.3. Autonomous Dev Agent & Self-Healing Code (actions/dev_agent.py, actions/code_helper.py)
+    10.4. Computer Control & Hardware Settings (actions/computer_control.py, actions/computer_settings.py)
+    10.5. Browser Automation & Web Intelligence (actions/browser_control.py, actions/web_search.py)
+    10.6. Desktop, App Launcher & Reminders (actions/desktop.py, actions/open_app.py, actions/reminder.py)
+    10.7. System Monitoring & Battery Guard (actions/system_monitor.py, core/power_monitor.py)
+    10.8. Media & Communications (actions/youtube_video.py, actions/send_message.py, actions/flight_finder.py, actions/game_updater.py, actions/weather_report.py)
+    10.9. Proactive Intelligence & Topic Monitoring (actions/proactive.py, actions/background_monitor.py)
+    10.10. Vision & Screen Perception (actions/screen_processor.py)
+11. ADVANCED PLUGINS ECOSYSTEM (plugins/*.py)
+    11.1. Chrome-Native Screen Control & Computer Use (plugins/screencntrl.py)
+    11.2. Floating Pill Bubble Mode (plugins/shrink.py)
+    11.3. Autonomous HTML Email Dispatcher (plugins/gmail.py)
+    11.4. Full-Track Local Music Player (plugins/songs.py)
+12. USER INTERFACE & HUD (ui.py)
+13. REMOTE WEB DASHBOARD & MOBILE CONTROL (dashboard/server.py)
+14. MEMORY & CONTEXT PERSISTENCE (memory/memory_manager.py, memory/config_manager.py)
+15. CONFIGURATION & CREDENTIAL MANAGEMENT (config/)
+16. WORKFLOW & SEQUENCE TRACES
+
+
+================================================================================
+1. EXECUTIVE SUMMARY & DESIGN PHILOSOPHY
+================================================================================
+AUREX (Mark LIV) is an autonomous, cross-platform personal AI assistant developed
+by Hammad Nawaz. Unlike conventional assistants that rely on cloud speech-to-text
+followed by text LLM generation and cloud text-to-speech, AUREX is built directly
+on top of the Gemini Live WebSocket API (`models/gemini-3.1-flash-live-preview`).
+
+Core Architectural Tenets:
+1. Native Audio Streaming: Bidirectional streaming (16 kHz PCM microphone input,
+   24 kHz PCM assistant speech output) provides sub-second latency and natural
+   human conversational pacing without intermediate transcription lags.
+2. Zero GPU Hardware-Agnostic Holographic Head: A fully custom 3D holographic
+   face renderer executing entirely on CPU via PyQt6 QPainter and NumPy. It runs
+   identically on high-end gaming workstations, ten-year-old laptops, virtual
+   machines, and remote desktop sessions.
+3. Physics + Linguistic Multilingual Lip-Sync: Mouth articulators calculate real
+   F1/F2 audio formants combined with Unicode-normalized text viseme schedules,
+   accurately articulating stop-consonants (/m/, /b/, /p/) and vowels without
+   language-specific phoneme tables.
+4. Digital Autonomy & Full Computer Use: AUREX controls the local desktop
+   environment—manipulating files, adjusting hardware settings, navigating
+   browsers with Playwright/CDP, inspecting UI automation trees, clicking buttons,
+   and solving online multiple-choice questions (MCQs).
+5. Unforgeable Security & Deep Reversibility: Destructive or irreversible actions
+   (shutdown, reboot, WiFi disabling) are physically gated behind an on-screen
+   human confirmation widget that the LLM cannot self-confirm. Reversible actions
+   (file moves, edits, creation, settings) push onto an integrated Undo stack.
+
+
+================================================================================
+2. PROJECT REPOSITORY DIRECTORY STRUCTURE
+================================================================================
+d:\VS Code\AUREX\
+│
+├── main.py                     # Central orchestrator: Gemini Live session, audio I/O loop, dispatch
+├── ui.py                       # High-tech HUD, waveform visualizers, settings drawer, Qt application
+├── requirements.txt            # Cross-platform dependencies specification
+├── run_aurex.bat               # Windows quick-launch script
+├── setup.py                    # Environment validator and installer
+├── readme.md                   # Project documentation and release notes
+│
+├── core/                       # Core system infrastructure
+│   ├── action_loader.py        # Automatic discovery and signature introspection for actions/
+│   ├── plugin_loader.py        # Dynamic third-party plugin discovery for plugins/
+│   ├── avatar.py               # Software-rendered 3D holographic avatar (QPainter)
+│   ├── avatar_mesh.py          # Procedural 3D mesh generator based on MediaPipe canonical model
+│   ├── face_model.obj          # 3D facial topology geometric dataset (25 KB)
+│   ├── viseme.py               # Formant-to-viseme and text-to-viseme multilingual mapper
+│   ├── echo.py                 # Self-echo cancellation guard and band energy subtraction
+│   ├── audio_devices.py        # Host audio API deduplication, device enumerator & picker
+│   ├── wake_word.py            # Local "Hey Aurex" / "Hey Jarvis" openwakeword ONNX engine
+│   ├── confirm.py              # Unforgeable GUI confirmation gate for hazardous tasks
+│   ├── undo.py                 # Multi-level undo stack for reversible state mutations
+│   ├── gemini.py               # Fault-tolerant model ladder with automatic fallback & timeouts
+│   ├── llm_client.py           # Unified LLM provider client abstraction
+│   ├── power_monitor.py        # Cross-platform battery and power state telemetric monitor
+│   ├── prompt.txt              # System instructions, behavior rules, dynamic prompt templates
+│   ├── stt.py                  # Standalone fallback speech-to-text module
+│   ├── tts.py                  # Standalone fallback text-to-speech engine
+│   ├── train_hey_aurex.py      # Training script for custom ONNX wake word models
+│   └── models/
+│       └── hey_aurex.onnx      # Pretrained custom wake word neural network
+│
+├── actions/                    # Built-in self-describing tool action implementations
+│   ├── background_monitor.py   # Scheduled news/topic watcher
+│   ├── browser_control.py      # Playwright-driven browser controller
+│   ├── code_helper.py          # Inline code generator, reviewer, and debugger
+│   ├── computer_control.py     # Keyboard, mouse, media keys, audio volume, display brightness
+│   ├── computer_settings.py    # WiFi, Bluetooth, Dark Mode, Night Light, Power states
+│   ├── desktop.py              # Window manager (minimize, maximize, focus, tile, snap)
+│   ├── dev_agent.py            # Autonomous software engineering agent with self-healing loop
+│   ├── file_controller.py      # Advanced file manager (OneDrive-aware, search, reveal, organize)
+│   ├── file_processor.py       # Universal document reader (PDF, DOCX, XLSX, CSV, Code, Media)
+│   ├── flight_finder.py        # Live airline flight status and fare intelligence
+│   ├── game_updater.py         # Steam and Epic Games library scanner and background updater
+│   ├── open_app.py             # Cross-platform application launcher with alias dictionary
+│   ├── proactive.py            # Proactive engagement engine with time/context awareness
+│   ├── reminder.py             # OS-native task scheduler alerts (Windows, macOS, Linux)
+│   ├── screen_processor.py     # Desktop screenshot and webcam capture utilities
+│   ├── send_message.py         # Desktop messaging client automation (WhatsApp, Telegram)
+│   ├── system_monitor.py       # Real-time hardware telemetry (CPU, RAM, GPU, thermals via NVML)
+│   ├── weather_report.py       # Live meteorological reports
+│   ├── web_search.py           # Grounded search (Google Search with DuckDuckGo fallback)
+│   └── youtube_video.py        # YouTube search and video playback controller
+│
+├── plugins/                    # Drop-in extensible plugin modules
+│   ├── _template.py            # Developer scaffold for authoring new AUREX plugins
+│   ├── gmail.py                # Autonomous HTML email composer and SMTP sender
+│   ├── screencntrl.py          # Screen comprehension, UI Automation, WinRT OCR, DOM clicking
+│   ├── shrink.py               # Minimizes HUD into a compact audio-reactive floating pill
+│   └── songs.py                # Full-track local music playback via yt-dlp and ffplay
+│
+├── dashboard/                  # Remote control Web server
+│   ├── server.py               # FastAPI + Uvicorn server, WebSocket relay, AES-256 encryption
+│   └── static/
+│       ├── app.html            # Mobile/desktop dashboard web app
+│       ├── login.html          # Authentication pairing portal
+│       └── crypto-js.min.js    # Client-side cryptographic primitives
+│
+├── memory/                     # Persistence layer
+│   ├── memory_manager.py       # Long-term knowledge base, fast prompt injector, semantic search
+│   ├── config_manager.py       # System settings, hardware device preferences, audio modes
+│   ├── long_term.json          # Persistent factual store (identity, preferences, projects)
+│   ├── recent_chat.json        # Rolling conversation turns for contextual continuity
+│   └── sent_emails.json        # Outgoing email dispatch log
+│
+└── config/                     # Configuration, assets, and templates
+    ├── api_keys.json           # User API credentials (Gemini, email, custom keys)
+    ├── api_keys.json.template  # Template for bootstrapping new installs
+    ├── contacts.json           # Personal contacts book with nicknames and emails
+    ├── jarvis.ico              # High-resolution application icon
+    └── certs/                  # Self-signed SSL/TLS certificates for HTTPS dashboard
+
+
+================================================================================
+3. CORE ARCHITECTURE & LIFECYCLE (main.py)
+================================================================================
+`main.py` is the central operational spine of AUREX. It binds the PyQt6 GUI,
+Gemini Live WebSocket session, audio devices, and tool execution engines.
+
+Key Responsibilities & Components:
+- Windows Subprocess Hardening: Overrides `subprocess.Popen` on Windows to enforce
+  `CREATE_NO_WINDOW`, eliminating flashing command prompt windows across all tools.
+- Console Code Page Sanitization: Reconfigures stdout and stderr streams to UTF-8
+  with replacement fallbacks, ensuring foreign characters and emojis never crash
+  legacy console environments (e.g., cp1252, cp1254, cp932).
+- Audio Pipeline:
+  * Input Stream: `sounddevice.InputStream` captures 16,000 Hz, 16-bit mono PCM.
+    Transfers frames into `_mic_queue` via zero-copy buffering.
+  * Output Stream: `sounddevice.OutputStream` outputs 24,000 Hz, 16-bit mono PCM.
+    Plays incoming audio chunks from Gemini Live.
+  * Real-Time RMS Loudness: `_pcm_level()` computes Root-Mean-Square volume with
+    a calibrated noise floor (60.0 to 2600.0) mapped into a 0.0–1.0 float.
+- Gemini Live Session Loop (`_live_session_loop`):
+  * Connects to `models/gemini-3.1-flash-live-preview` using `google.genai.Client`.
+  * Passes `LiveConnectConfig` with native `AUDIO` modalities, configured voice
+    (e.g., Puck, Charon, Kore, Fenrir, Aoede), and system instructions.
+  * Dynamically populates tools from both `ActionRegistry` and `PluginRegistry`.
+- Concurrency Model:
+  * Audio I/O threads run asynchronously off the main thread.
+  * Incoming Gemini Live messages (`receive()`) stream text chunks, audio PCM,
+    and `ToolCall` events.
+  * Non-blocking tool dispatch: Tools execute in worker thread pools. When a tool
+    starts, AUREX immediately issues an audible spoken acknowledgment in the
+    user's language to prevent silent waiting gaps.
+- Session Continuity & Error Recovery:
+  * Maintains a rolling history of conversation turns in `memory/recent_chat.json`.
+  * Recovers gracefully from network disconnects or WebSocket 1011 errors by
+    re-establishing sessions while injecting conversational context.
+
+
+================================================================================
+4. HOLOGRAPHIC AVATAR & VISEME SUBSYSTEM
+================================================================================
+Files: `core/avatar.py`, `core/avatar_mesh.py`, `core/viseme.py`, `core/face_model.obj`
+
+1. Pure Software Rendering:
+   - Built entirely with PyQt6 `QPainter`.
+   - Bypasses OpenGL, DirectX, and Vulkan drivers completely. Eliminates driver
+     crashes, GPU power draw, and cross-platform shader incompatibilities.
+   - Executes at a buttery 60 FPS (throttling dynamically down to 30 FPS or 20 FPS
+     when idle).
+
+2. 3D Geometric Mesh (`core/avatar_mesh.py`):
+   - Face topology is constructed from MediaPipe's canonical 3D human face model
+     (`core/face_model.obj`), comprising measured anatomic facial landmarks.
+   - Generates procedural skull structure, neck columns, jaw pivot hierarchy,
+     and eyelid contours at startup.
+   - Projects 3D vertices (X, Y, Z) to 2D screen coordinates using a perspective
+     pinhole camera model (camera distance `_CAM_D = 4.6` head-half-heights).
+   - Depth sorting: Facets and lines are sorted along the Z-axis, with wireframe
+     lattice alpha opacities grouped into batched `drawLines()` calls.
+
+3. Multilingual Dual-Source Lip-Sync (`core/viseme.py`):
+   - Audio Formant Analysis: `_pcm_visemes()` evaluates 20 ms PCM audio slices
+     using Fast Fourier Transforms (FFT).
+     * F1 (150–1100 Hz): Determines jaw openness (close vs open vowels).
+     * F2 (600–3200 Hz): Determines lip width (spread vs rounded vowels).
+   - Transcript Consonant Fusion: High-frequency audio spectrum cannot reliably
+     distinguish bilabial closures (/m/, /b/, /p/). AUREX inspects the model's
+     spoken text stream to forcibly close the lips on plosives and nasals.
+   - Universal Unicode Reduction: Strips accents and diacritics using Unicode
+     NFD decomposition; transliterates Cyrillic and Greek characters into Latin
+     bases. All Western and Slavic languages share one coherent viseme table.
+
+4. Expressive Facial Acting & Behavioral States:
+   - State-Reflective Gaze:
+     * Listening: Gaze fixes directly forward, eye contact locked on user.
+     * Thinking: Eyes saccade upward and away.
+     * Speaking: Periodic micro-saccades and natural blinks.
+     * Asleep: Eyelids lower gently to rest.
+   - Brow Rig: Brows subtly lift on vocal emphasis or high audio formants.
+   - Theme Adaptability: Shading lookup table (`_LUT_N = 192`) dynamically re-tints
+     to match the active HUD accent color from the UI hue wheel.
+
+
+================================================================================
+5. ACOUSTIC PIPELINE & AUDIO CONTROL
+================================================================================
+Files: `core/echo.py`, `core/audio_devices.py`, `core/wake_word.py`
+
+1. Self-Echo Guard (`core/echo.py`):
+   - Prevents the assistant from hearing its own voice played through the speakers
+     without blindly muting the microphone.
+   - Band Energy Fingerprinting: Splits incoming microphone audio and outgoing
+     speaker audio into log-spaced speech frequency bands (200 Hz to 7000 Hz).
+   - Spectral Subtraction: Subtracts recent speaker output bands from incoming
+     microphone frames. Residual energy of self-speech drops near zero, whereas
+     a human user speaking simultaneously introduces distinct formants that survive
+     subtraction.
+   - Dynamic Acoustic Calibration: Continuously tracks speaker-to-mic gain ratios,
+     adapting on the fly to volume knob adjustments or room acoustics.
+
+2. Audio Device Picker & Host API Resolution (`core/audio_devices.py`):
+   - Standard `sounddevice` enumerates all combinations of devices and host APIs
+     (MME, DirectSound, WASAPI, WDM-KS, ALSA, CoreAudio), yielding dozens of
+     confusing duplicate entries.
+   - Intelligently filters out virtual sound mappers, zero-channel endpoints,
+     and duplicates, presenting only genuine hardware names.
+   - Probes sample rate capabilities (16 kHz in / 24 kHz out) on background
+     worker threads to prevent UI freezes.
+
+3. Local Wake-Word Engine (`core/wake_word.py`):
+   - Integrates `openwakeword` for local, zero-cloud detection of "Hey Aurex"
+     (custom ONNX model) and "Hey Jarvis".
+   - Non-blocking Queue Architecture: Audio callback feeds a low-overhead queue;
+     inference executes on a dedicated background thread.
+   - Zero CPU consumption when wake-word mode is toggled off in settings.
+
+
+================================================================================
+6. SAFETY & REVERSIBILITY FRAMEWORK
+================================================================================
+Files: `core/confirm.py`, `core/undo.py`
+
+1. Unforgeable Confirmation Gate (`core/confirm.py`):
+   - Problem: In traditional LLM assistants, confirming an action is done via a
+     parameter like `confirmed=true`. The LLM can easily hallucinate or forge
+     this flag on its first attempt.
+   - Solution: Hazardous tools (e.g., system shutdown, OS restart, WiFi toggle)
+     call `confirm.request()`.
+   - The method registers an in-memory pending task with a cryptographic random
+     key, immediately presents a physical PyQt6 confirmation banner on the HUD,
+     and returns an instruction for the assistant to verbally ask the user.
+   - Execution occurs IF AND ONLY IF the physical human user clicks "CONFIRM"
+     on screen. Auto-expires after 90 seconds.
+
+2. Universal Undo Stack (`core/undo.py`):
+   - Thread-safe LIFO stack holding the last 10 reversible operations.
+   - Reversible actions (file movement, renaming, content writing, settings
+     alterations) register a lambda inverse closure upon success.
+   - Example: Writing a file captures its previous text; moving a file captures
+     its source path.
+   - When the user says "undo that", "revert that", or "put it back", AUREX
+     pops the top entry and executes its reversal logic cleanly.
+
+
+================================================================================
+7. GEMINI LLM CLIENTS & RESILIENCE LADDER
+================================================================================
+Files: `core/gemini.py`, `core/llm_client.py`
+
+AUREX separates conversational speech from single-shot intelligence calls (such
+as OCR analysis, flight extraction, code generation, and dev agent planning).
+
+The Resilience Ladder:
+1. Primary Tier: Ephemeral throwaway Gemini Live sessions. Leverages the separate
+   Live API quota pool, preserving the standard REST quota for critical tasks.
+2. Secondary Tier: Pinned REST models (`gemini-2.5-flash`, `gemini-2.5-flash-lite`).
+3. Tertiary Fallback: Dynamic rolling aliases (`gemini-flash-latest`).
+4. Strict Timeout Safeguards: Every single REST call enforces an explicit timeout
+   (default 15–60 seconds). Network hangs or 504 errors fail immediately down to
+   the next rung on the ladder rather than stalling the assistant indefinitely.
+
+
+================================================================================
+8. DISCOVERY ENGINES & PLUGIN EXTENSIBILITY
+================================================================================
+Files: `core/action_loader.py`, `core/plugin_loader.py`
+
+AUREX decouples tool definitions from the core codebase. Adding a new tool
+requires zero edits to `main.py`.
+
+1. Action Discovery (`core/action_loader.py`):
+   - Scans `actions/*.py` at launch using `importlib.util`.
+   - Looks for a module-level `TOOL` dictionary specifying:
+     * `name`: Function identifier string.
+     * `description`: Capability summary read by Gemini Live for routing.
+     * `parameters`: JSON Schema describing inputs.
+     * `handler`: Callable function.
+     * Optional `behavior` ("BLOCKING" / "NON_BLOCKING") and `scheduling` ("WHEN_IDLE" / "SILENT").
+   - Signature Introspection: The handler automatically receives `parameters`
+     plus any requested context injections (`player`, `speak`, `session_memory`).
+
+2. Plugin Discovery (`core/plugin_loader.py`):
+   - Scans `plugins/*.py` for drop-in modular plugins.
+   - Inspects `PLUGIN` dictionary declarations.
+   - Isolates broken plugins: Syntax errors or missing libraries in one plugin
+     are logged and skipped without impairing other modules or stopping startup.
+
+
+================================================================================
+9. SYSTEM PROTOCOLS & RUNTIME SELF-KNOWLEDGE (core/prompt.txt)
+================================================================================
+`core/prompt.txt` establishes the persona, operational protocol, and behavioral
+constraints of AUREX.
+
+Key Directives:
+- First-Person Embodiment: The animated head is the assistant's face ("my face",
+  "I look"). Screen captures showing the HUD are treated as looking into a mirror.
+- Distinguishing Camera vs Screen: A webcam frame depicts the USER; a screen capture
+  depicts the COMPUTER.
+- Runtime Self-Knowledge: Tokens `{assistant_name}`, `{platform}`, `{capabilities}`,
+  and `{limits}` are compiled at launch from the live system environment.
+- Level Voice & Tone: Composed, dry understatement, respectful operator register.
+  No sycophantic praise ("Good question!"), no robotic hedging, no trailing filler.
+- Immediate Acknowledgment Before Silences: When an action requires processing time,
+  AUREX speaks a single short sentence in the conversation's active language
+  confirming the action before invoking the tool within the same turn.
+- Linguistic Continuity: Dynamically matches the user's latest spoken language
+  (Urdu, Hindi, English, Turkish, Spanish, etc.) without code-mixing or drifting.
+
+
+================================================================================
+10. FULL ACTIONS INVENTORY (actions/*.py)
+================================================================================
+
+10.1. File System Controller (`actions/file_controller.py`)
+- Full direct OS file system control.
+- Resolves actual Windows Known Folder GUIDs (Desktop, Downloads, Documents),
+  correctly handling OneDrive-redirected directories.
+- Actions:
+  * `list_drives`: Queries all logical volumes and disk storage statistics.
+  * `tree`: Visualizes directory hierarchy up to specified depths.
+  * `recent_files`: Locates files created or modified within today/recent hours.
+  * `search_content`: Fast full-text keyword search across files.
+  * `organize_folder`: Automatically classifies clutter into subfolders by type.
+  * `open_folder` / `reveal`: Launches Windows File Explorer with specific items selected.
+  * `open_file`: Launches the default operating system desktop application.
+  * `create_file` / `write`: Writes content to disk with automatic undo registration.
+  * `delete`: Moves items safely to the OS Recycle Bin / Trash via `send2trash`.
+
+10.2. Universal File Processor (`actions/file_processor.py`)
+- Deep multi-format document reader and transformer (1800+ lines).
+- Formats handled:
+  * PDF: Text extraction, page summarization, layout analysis, Word export.
+  * Office Docs: `.docx`, `.doc`, `.rtf`, `.odt`, `.pptx`.
+  * Spreadsheets: `.xlsx`, `.xls`, `.csv`, `.tsv` (multi-sheet parsing, formula evaluations).
+  * Structured Data: `.json`, `.xml`, `.svg`, `.sql`, SQLite `.db` (runs safe SELECT queries).
+  * Media: Audio transcription, video metadata inspection, frame capture.
+  * Compressed Archives: `.zip`, `.tar.gz`, `.7z` (reads contents without extracting).
+  * Images: OCR via Tesseract/WinRT, visual scene descriptions via Gemini.
+
+10.3. Autonomous Dev Agent (`actions/dev_agent.py`, `actions/code_helper.py`)
+- High-level multi-file software engineering engine.
+- Lifecycle:
+  1. Architecture Planner: Generates project layout and file dependencies.
+  2. Code Writer: Writes full source files without truncation fences.
+  3. Execution & Validation: Runs tests or scripts in an isolated process.
+  4. Error Parser: Extracts Python tracebacks, file names, and line numbers.
+  5. Self-Healing Loop: Feeds traceback back into Gemini to fix bugs (up to 5 attempts).
+- `code_helper.py` provides targeted single-file generation, linting, and debugging.
+
+10.4. Computer Control & Settings (`actions/computer_control.py`, `actions/computer_settings.py`)
+- Low-level OS control:
+  * Audio volume adjustment, mute toggling.
+  * Screen brightness dimming / brightening.
+  * Keyboard keystroke emulation, hotkeys, text typing, clipboard operations.
+  * Power options: Sleep, lock workstation, log off, reboot, shutdown (gated).
+  * System settings: Night light, dark mode toggle, WiFi status.
+
+10.5. Browser Control & Web Search (`actions/browser_control.py`, `actions/web_search.py`)
+- Headless or visible browser automation via Playwright.
+- URL navigation, multi-tab switching, element clicking, form entry, screenshotting.
+- `web_search.py` features multi-mode queries (`news`, `research`, `price`, `compare`).
+- Utilizes Google Search Grounding with an automatic circuit-breaker fallback to
+  DuckDuckGo upon API quota exhaustion.
+
+10.6. Desktop, App Launcher & Reminders (`actions/desktop.py`, `actions/open_app.py`, `actions/reminder.py`)
+- `desktop.py`: Window geometry management (minimize, maximize, snap left/right).
+- `open_app.py`: Fuzzy app name matching across extensive alias tables (Chrome,
+  VS Code, Terminal, Spotify, Steam, WhatsApp, etc.).
+- `reminder.py`: Registers persistent OS-level scheduled tasks (Windows Task
+  Scheduler, macOS LaunchAgents, Linux systemd timers).
+
+10.7. System Monitoring & Battery Guard (`actions/system_monitor.py`, `core/power_monitor.py`)
+- Real-time zero-subprocess hardware telemetry.
+- Reads CPU usage, RAM utilization, thermal sensor readings via `psutil`.
+- Directly interfaces with `nvml.dll` / `libnvidia-ml.so` via `ctypes` for GPU
+  load and VRAM statistics.
+- Battery monitor alerts when charging is disconnected or battery levels fall critical.
+
+10.8. Media & Communications
+- `actions/youtube_video.py`: Queries YouTube, extracts video identifiers, opens
+  streams, and controls playback.
+- `actions/send_message.py`: Automates desktop messaging for WhatsApp and Telegram.
+- `actions/flight_finder.py`: Extracts and parses live flight routes, dates, and prices.
+- `actions/game_updater.py`: Reads Steam `.acf` manifests and Epic Games store manifests,
+  triggering background updates.
+- `actions/weather_report.py`: Provides meteorological forecasts by location.
+
+10.9. Proactive Intelligence (`actions/proactive.py`, `actions/background_monitor.py`)
+- `proactive.py`: Tracks user silence intervals (e.g., 15 minutes). At opportune
+  times, reviews memory context and initiates helpful, unprompted check-ins.
+- `background_monitor.py`: Watches specific news topics on daily schedules,
+  alerting the user when significant developments occur (crypto/financial spam excluded).
+
+10.10. Vision & Screen Perception (`actions/screen_processor.py`)
+- High-speed screen grab via `mss` and webcam capture via OpenCV (`cv2`).
+- Encodes frames as JPEG/WebP and injects them directly into the active Gemini Live stream.
+
+
+================================================================================
+11. ADVANCED PLUGINS ECOSYSTEM (plugins/*.py)
+================================================================================
+
+11.1. Chrome-Native Screen Control & Computer Use (`plugins/screencntrl.py`)
+- Enormous module (2,900+ lines) providing state-of-the-art computer interaction.
+- Perception & Control Hierarchy:
+  1. Real Chrome DOM & CDP: Connects directly to Google Chrome via Chrome DevTools
+     Protocol (CDP) port 9222 and Playwright. Inspects semantic DOM nodes,
+     accessibility trees, and element bounding boxes.
+  2. In-Page Dynamic AUREX Overlay: Injects lightweight CSS/JS overlay elements
+     that smoothly track interactive elements during page scrolling and DOM mutations.
+  3. Visual Grounding: Translates visual intent into precise clicks without
+     guessing random coordinates.
+  4. Practice MCQ Solver: Detects multiple-choice question elements on educational
+     portals, grounds option labels (A, B, C, D), and visually circles or clicks them.
+  5. Desktop Fallback: When outside Chrome, falls back to Windows UI Automation
+     (PyWinAuto) and native WinRT OCR to click buttons and read desktop apps.
+
+11.2. Floating Pill Bubble Mode (`plugins/shrink.py`)
+- Collapses the large HUD into a minimalist 40x40 pixel frameless floating pill widget.
+- Remains pinned on top (`WindowStaysOnTopHint`).
+- Visualizer: Emits smooth animated ripple waves corresponding to live microphone
+  or speaker volume levels.
+- Smooth expansion and contraction transitions back to the main HUD window.
+
+11.3. Autonomous HTML Email Dispatcher (`plugins/gmail.py`)
+- Composes rich, responsive HTML emails with modern design aesthetics.
+- Features contact alias resolution (mapping "hamad54" to "hammadnawaz519@gmail.com").
+- Dispatches emails silently via secure SMTP (SSL/TLS) without intrusive popups.
+
+11.4. Full-Track Local Music Player (`plugins/songs.py`)
+- Provides 100% free, local music streaming without Spotify or API subscriptions.
+- Uses `yt-dlp` to extract direct audio streams and `ffplay` for seamless background playback.
+- Handles playback actions: play, pause, resume, stop, skip, volume controls.
+
+
+================================================================================
+12. USER INTERFACE & HUD (ui.py)
+================================================================================
+`ui.py` comprises over 6,000 lines of custom PyQt6 desktop interface architecture.
+
+Key Features & Widgets:
+- Futuristic Sci-Fi HUD: Dark-themed, ultra-clean aesthetic featuring the holographic
+  head in the center, surrounding circular audio waveforms, and status telemetry.
+- Dynamic Content Panel: Collapsible lower section that renders formatted search
+  results, news cards, flight info, and documents.
+- Real-Time Audio Waveform: Audio visualizer displaying reactive oscillations for
+  both incoming user microphone audio and outgoing assistant speech.
+- Live Hue Wheel Theming: Custom interactive color wheel allowing users to shift
+  the entire accent palette in real time, instantly synchronizing HUD borders,
+  buttons, and avatar lighting.
+- Integrated Settings Drawer:
+  * Audio input/output device selectors.
+  * Gemini voice selector (Puck, Charon, Kore, Fenrir, Aoede).
+  * Wake-word toggles and one-click model installer.
+  * Push-to-Talk (Hold Ctrl+Space).
+  * Thinking mode and proactive check-in controls.
+- Memory Inspector Panel: Lists all stored long-term memory facts with timestamps,
+  enabling users to view or delete stored information with a single click.
+- Floating Clipboard Intelligence: Monitors OS clipboard changes. When text is copied,
+  a subtle HUD pill offers instant actions (Translate, Summarize, Explain, Fix Code).
+
+
+================================================================================
+13. REMOTE WEB DASHBOARD & MOBILE CONTROL (dashboard/server.py)
+================================================================================
+AUREX includes a local HTTP server that allows users to control the assistant from
+their smartphone or another machine on the local network.
+
+Technical Architecture:
+- Framework: Built on FastAPI and Uvicorn running on port 8000.
+- Application-Layer Cryptography:
+  * Eliminates browser HTTPS self-signed certificate warnings by running over
+    plain HTTP with end-to-end AES-256-CBC encryption.
+  * Server generates an 8-character pairing session key.
+  * Key derivation: SHA-256(sessionKey + salt) yields a 32-byte AES key.
+  * Client-side JavaScript uses CryptoJS (auto-downloaded and cached locally)
+    to encrypt and decrypt all WebSocket payloads.
+- QR Code Instant Pairing: The desktop HUD displays a high-resolution QR code;
+  scanning it with a mobile camera connects instantly without manual typing.
+- Mobile Capabilities: Full text chat, real-time voice streaming, system status
+  monitoring, and multi-file drag-and-drop uploads.
+
+
+================================================================================
+14. MEMORY & CONTEXT PERSISTENCE
+================================================================================
+Files: `memory/memory_manager.py`, `memory/config_manager.py`
+
+1. Two-Tier Memory Storage Architecture:
+   - Challenge: Traditional assistants append their entire memory file into the
+     system prompt, which wastes prompt tokens, inflates latency, and hits limits.
+   - Solution:
+     * Tier 1 (Core Prompt Memory, ~900 chars): High-priority facts (user identity,
+       primary language, active projects) injected into every session prompt.
+     * Tier 2 (Disk-Backed Long-Term Store, up to 200,000 chars): Stored in
+       `memory/long_term.json`. Retrieved on demand via the `recall_memory` tool.
+   - Silent Language Detection: Automatically observes the user's natural language,
+     recording it into memory (`identity.language`) to ensure future sessions
+     boot into the user's preferred language.
+
+2. Session Summaries & Morning Briefing:
+   - On session teardown, conversations are condensed into a 2-sentence summary
+     saved to `memory/long_term.json`.
+   - On the first startup of a new day, AUREX reads the previous session summary,
+     greets the user by name, reports the time, recaps yesterday's projects,
+     and offers relevant morning news.
+
+
+================================================================================
+15. CONFIGURATION & CREDENTIAL MANAGEMENT
+================================================================================
+Files: `config/api_keys.json`, `config/contacts.json`
+
+- `config/api_keys.json`:
+  * Stores `gemini_api_key` for Gemini Live and REST model access.
+  * Stores user identity settings (`user_name`, `assistant_name`, `voice`).
+  * Stores system preferences (`push_to_talk`, `wake_word_enabled`, `theme_color`).
+  * Stores email credentials (`gmail_user`, `gmail_app_password`).
+- `config/contacts.json`:
+  * Maps nicknames and full names to verified email addresses and phone numbers.
+
+
+================================================================================
+16. WORKFLOW & SEQUENCE TRACES
+================================================================================
+
+Voice Command Execution Trace:
+1. User speaks: "Check D drive college folder and summarize lecture.pdf"
+2. Audio Stream: Captured at 16 kHz int16 PCM -> `_pcm_level()` updates HUD waveform.
+3. Gemini Live Engine: Receives PCM stream -> Determines tool call is required.
+4. Spoken Acknowledgment: AUREX immediately responds out loud: "Checking your college folder now, sir."
+5. Tool Dispatch: `ActionRegistry.run("file_processor", {...})` runs in a worker thread.
+6. Execution: `actions/file_processor.py` resolves the path, extracts PDF text, and condenses key topics.
+7. Return Data: Summary data is returned to Gemini Live.
+8. Synthesis & Lip-Sync: Gemini streams 24 kHz audio response -> `_pcm_visemes()` slices
+   audio formants -> Avatar mouth articulates with precise closures and vowel shapes.
+
+Hazardous Operation Confirmation Trace:
+1. User speaks: "Shut down the computer"
+2. Tool Dispatch: `computer_settings.py` calls `confirm.request("shutdown", ...)`
+3. Safety Gate: Generates pending key, triggers Qt signal -> HUD shows "CONFIRM SHUTDOWN" banner.
+4. Verbal Response: AUREX replies: "Please confirm the shutdown on your screen, sir."
+5. Physical Verification: User taps button -> Callable runs `os.system("shutdown /s /t 0")`.
+================================================================================
+                            END OF AUREX BLUEPRINT
+================================================================================

@@ -14,7 +14,8 @@ def get_base_dir():
 
 BASE_DIR         = get_base_dir()
 API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
-PROJECTS_DIR     = Path.home() / "Desktop" / "JarvisProjects"
+from core.safety import is_c_drive, MSG_C_DRIVE_BLOCKED, MSG_D_DELETE_BLOCKED
+PROJECTS_DIR     = Path("D:/Projects") if Path("D:/").exists() else Path.home() / "Desktop" / "JarvisProjects"
 MAX_FIX_ATTEMPTS = 5
 # Model choice, timeout and fallback ladder all live in core/gemini.py.
 from core import gemini

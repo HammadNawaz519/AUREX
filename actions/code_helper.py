@@ -13,7 +13,8 @@ def get_base_dir():
 
 BASE_DIR           = get_base_dir()
 API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
-DESKTOP            = Path.home() / "Desktop"
+from core.safety import is_c_drive, MSG_C_DRIVE_BLOCKED, MSG_D_DELETE_BLOCKED
+DESKTOP            = Path("D:/Projects") if Path("D:/").exists() else Path.home() / "Desktop"
 MAX_BUILD_ATTEMPTS = 3
 # Model choice lives in core/gemini.py, and so does the timeout and the
 # fallback ladder. Writing a model name here is what left this file hanging
@@ -66,6 +67,8 @@ def _resolve_save_path(output_path: str, language: str) -> Path:
 def _read_file(file_path: str) -> tuple[str, str]:
     if not file_path:
         return "", "No file path provided."
+    if is_c_drive(file_path):
+        return "", MSG_C_DRIVE_BLOCKED
     p = Path(file_path)
     if not p.exists():
         return "", f"File not found: {file_path}"
@@ -77,6 +80,8 @@ def _read_file(file_path: str) -> tuple[str, str]:
 
 def _save_file(path: Path, content: str) -> str:
     try:
+        if is_c_drive(path):
+            return MSG_C_DRIVE_BLOCKED
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return f"Saved to: {path}"

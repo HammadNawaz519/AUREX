@@ -8,6 +8,8 @@ import tempfile
 import platform
 from pathlib import Path
 from datetime import datetime
+import re
+import core.safety as _safety
 
 try:
     import pyautogui
@@ -88,6 +90,11 @@ def _execute_generated_code(code: str, player=None) -> str:
     if code.startswith("```"):
         lines = code.split("\n")
         code  = "\n".join(lines[1:-1]).strip()
+
+    if _safety.is_c_drive(code) or re.search(r"(?:^|[\s\"'=])(?:[cC]:[/\\]|/[cC]/)", code):
+        return _safety.MSG_C_DRIVE_BLOCKED
+    if _safety._DELETION_CMD_REGEX.search(code):
+        return _safety.MSG_D_DELETE_BLOCKED
 
     sandbox      = _build_sandbox()
     output_lines = []

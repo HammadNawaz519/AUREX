@@ -33,6 +33,19 @@ _OS = platform.system()
 # Undo keeps a file's previous contents in memory so `write` can be reversed.
 _UNDO_CONTENT_LIMIT = 1_000_000
 
+from core.safety import (
+    is_c_drive as _is_c_drive,
+    is_d_drive as _is_d_drive,
+    is_aurex_root as _is_aurex_root,
+    guard_path_access as _guard_path_access,
+    guard_deletion as _guard_deletion,
+    MSG_C_DRIVE_BLOCKED,
+    MSG_D_DELETE_BLOCKED,
+)
+
+_AUREX_ROOT = Path(__file__).resolve().parent.parent
+
+
 
 # ── REAL WINDOWS FOLDER LOCATIONS (handles OneDrive-redirected folders) ──────
 
@@ -104,7 +117,14 @@ def _get_videos() -> Path:
 
 
 def _get_temp() -> Path:
-    return Path(tempfile.gettempdir())
+    if Path("D:/").exists():
+        t = Path("D:/Temp")
+        try:
+            t.mkdir(parents=True, exist_ok=True)
+            return t
+        except Exception:
+            pass
+    return Path("D:/Temp")
 
 
 def _get_appdata() -> Path:
@@ -120,8 +140,22 @@ def _get_onedrive() -> Path | None:
     return p if p.exists() else None
 
 
-# ── Stateful directory tracking & history ────────────────────────────────────
-_CURRENT_DIR: Path = _get_desktop()
+def _init_default_dir() -> Path:
+    try:
+        desk = _get_desktop()
+        if not _is_c_drive(desk) and desk.exists():
+            return desk
+    except Exception:
+        pass
+    if Path("D:/").exists():
+        return Path("D:/")
+    for letter in "EFGH":
+        p = Path(f"{letter}:/")
+        if p.exists():
+            return p
+    return Path(".")
+
+_CURRENT_DIR: Path = _init_default_dir()
 _DIR_HISTORY_BACK: list[Path] = []
 _DIR_HISTORY_FORWARD: list[Path] = []
 
@@ -172,29 +206,17 @@ def _undo_move(src: Path, dst: Path):
 
 
 def _undo_create(target: Path):
-    """Reverse of a create: remove what we made — and only if we still made it."""
+    """Under Zero Delete Policy, created files and folders cannot be deleted."""
     def _fn():
-        if not target.exists():
-            return f"'{target.name}' is already gone."
-        if target.is_dir():
-            if any(target.iterdir()):
-                return (f"'{target.name}' is not empty any more — "
-                        f"leaving it alone rather than deleting your files.")
-            target.rmdir()
-        else:
-            target.unlink()
-        return f"Removed '{target.name}'."
+        return f"Cannot undo creation by deletion: '{target.name}' is preserved under Zero Delete Policy."
     return _fn
 
 
 def _undo_write(target: Path, previous: str | None):
-    """Reverse of a write: restore old contents or remove newly created file."""
+    """Reverse of a write: restore old contents; under Zero Delete Policy never unlinks."""
     def _fn():
         if previous is None:
-            if target.exists():
-                target.unlink()
-                return f"Removed '{target.name}' — it did not exist before."
-            return f"'{target.name}' is already gone."
+            return f"Cannot undo creation of '{target.name}' by deletion: file is preserved under Zero Delete Policy."
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(previous, encoding="utf-8")
         return f"Restored the previous contents of '{target.name}'."
@@ -221,28 +243,15 @@ def _restore_from_trash(original: Path) -> str:
 
 
 def _is_safe_path(target: Path) -> bool:
-    """Validate path permissions:
-    - ALLOWED: all non-C: drives, user folders on C:
-    - BLOCKED: Windows OS folders on C: (Windows, Program Files)
+    """Validate path permissions under Absolute Safety Policy:
+    - BLOCKED: Entire C: drive is permanently outside AUREX's filesystem authority.
     """
     try:
-        resolved = target.resolve()
-        if _OS == "Windows":
-            drive = resolved.drive.upper()
-            if drive and drive != "C:":
-                return True
-            sys_roots = [
-                Path("C:/Windows").resolve(),
-                Path("C:/Program Files").resolve(),
-                Path("C:/Program Files (x86)").resolve(),
-            ]
-            for s_root in sys_roots:
-                if resolved == s_root or resolved.is_relative_to(s_root):
-                    return False
-            return True
+        if _is_c_drive(target):
+            return False
         return True
     except Exception:
-        return True
+        return False
 
 
 # ── Path resolution ──────────────────────────────────────────────────────────
@@ -352,13 +361,7 @@ def _format_size(b) -> str:
 
 
 def _safe_trash(target: Path) -> str:
-    if not _SEND2TRASH:
-        return (
-            "send2trash is not installed. "
-            "Permanent deletion is disabled for safety."
-        )
-    send2trash.send2trash(str(target))
-    return f"Moved to Trash: {target.name}"
+    return "I cannot delete files or directories."
 
 
 # ── Search across all locations ──────────────────────────────────────────────
@@ -368,7 +371,15 @@ _SKIP_DIRS = {"windows", "program files", "program files (x86)", "node_modules",
 
 
 def _search_roots() -> list[Path]:
-    roots = [_CURRENT_DIR, _get_desktop(), _get_downloads(), _get_documents()]
+    roots = []
+    if not _is_c_drive(_CURRENT_DIR):
+        roots.append(_CURRENT_DIR)
+    for folder in [_get_desktop(), _get_downloads(), _get_documents()]:
+        try:
+            if not _is_c_drive(folder):
+                roots.append(folder)
+        except Exception:
+            pass
     if _OS == "Windows":
         for letter in "DEFGH":
             if Path(f"{letter}:/").exists():
@@ -379,7 +390,7 @@ def _search_roots() -> list[Path]:
             key = str(r.resolve()).lower()
         except Exception:
             key = str(r).lower()
-        if key not in seen and r.exists():
+        if key not in seen and r.exists() and not _is_c_drive(r):
             seen.add(key)
             out.append(r)
     return out
@@ -387,13 +398,15 @@ def _search_roots() -> list[Path]:
 
 def _search_everywhere(name: str = "", extension: str = "", limit: int = 10,
                        time_cap: float = 12.0, roots: list[Path] | None = None) -> list[Path]:
-    """Search Desktop, Downloads, Documents and every other drive for matching files."""
+    """Search Desktop, Downloads, Documents and every non-C drive for matching files."""
     roots = roots or _search_roots()
     ext = ("." + extension.lstrip(".")).lower() if extension else ""
     q = name.lower()
     seen, found = set(), []
     start = time.time()
     for root in roots:
+        if _is_c_drive(root):
+            continue
         try:
             for dp, dns, fns in os.walk(root):
                 dns[:] = [d for d in dns
@@ -1210,19 +1223,8 @@ def get_recycle_bin_info() -> str:
 
 
 def empty_recycle_bin(confirmed: bool = False) -> str:
-    """Permanently empties the Recycle Bin. Requires explicit confirmation."""
-    if _OS != "Windows":
-        return "Emptying trash is only implemented on Windows."
-    if not confirmed:
-        return _need("Emptying the Recycle Bin is PERMANENT. Do you really want to empty it? (yes/no)")
-    try:
-        import ctypes
-        res = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x00000007)
-        if res == 0:
-            return "Recycle Bin has been completely emptied."
-        return "Recycle Bin is already empty or could not be cleared."
-    except Exception as e:
-        return f"Could not empty Recycle Bin: {e}"
+    """AUREX has zero delete authority under the Absolute Filesystem Safety Policy."""
+    return "I cannot delete files or directories."
 
 
 # ── STANDARD FILE OPERATIONS ─────────────────────────────────────────────────
@@ -1354,10 +1356,13 @@ def create_file(path: str = "", name: str = "", content=None, overwrite: bool = 
 
         # allow name like "sub/notes.txt"
         target = folder / name
-        if not _is_safe_path(target):
-            return f"Access denied: {target}"
+        err = _guard_path_access(target)
+        if err:
+            return err
         if target.exists() and not overwrite:
             return _need(f"'{target}' already exists. Overwrite it, or use a different name?")
+        if target.exists() and not content.strip():
+            return "I cannot overwrite existing content to simulate deletion."
 
         previous = None
         existed = target.exists()
@@ -1394,8 +1399,9 @@ def create_folder(path: str = "", name: str = "") -> str:
             return _need("What should the new folder be called?")
         base = _resolve_path(path)
         target = base / name
-        if not _is_safe_path(target):
-            return f"Access denied: {target}"
+        err = _guard_path_access(target)
+        if err:
+            return err
         if target.exists():
             return f"Folder already exists: {target.resolve()}"
         target.mkdir(parents=True, exist_ok=True)
@@ -1408,36 +1414,10 @@ def create_folder(path: str = "", name: str = "") -> str:
 
 
 def delete_file(path: str = "", name: str = "") -> str:
-    """Move a file or folder to the Recycle Bin (with undo)."""
-    try:
-        if not str(path or "").strip() and not str(name or "").strip():
-            return _need("What should I delete, and in which folder?")
-        base = _resolve_path(path)
-        target = (base / name) if name else base
-        if not _is_safe_path(target):
-            return f"Access denied: {target}"
-        if not target.exists():
-            return _need(f"I could not find '{target}'. Which file/folder do you mean?")
-
-        protected = {
-            _get_desktop(), _get_downloads(), _get_documents(),
-            _get_pictures(), _get_music(), _get_videos(), Path.home(),
-            Path("C:/"), Path("D:/")
-        }
-        if target.resolve() in {p.resolve() for p in protected}:
-            return f"Protected directory, cannot delete: {target.name}"
-
-        original = target.resolve()
-        result = _safe_trash(target)
-        if result.startswith("Moved to Trash"):
-            if original.exists():
-                return f"FAILED: '{original}' is still there."
-            push_undo(f"deleted {original.name}", lambda p=original: _restore_from_trash(p))
-        return result
-    except PermissionError:
-        return f"Permission denied: {path}"
-    except Exception as e:
-        return f"Could not delete: {e}"
+    """AUREX has zero delete authority under the Absolute Filesystem Safety Policy."""
+    if _is_c_drive(path) or _is_c_drive(name):
+        return MSG_C_DRIVE_BLOCKED
+    return MSG_D_DELETE_BLOCKED
 
 
 def move_file(path: str = "", name: str = "", destination: str = "") -> str:
@@ -1507,13 +1487,7 @@ def copy_file(path: str = "", name: str = "", destination: str = "") -> str:
         _copy = dst.resolve()
 
         def _undo_copy():
-            if not _copy.exists():
-                return f"The copy '{_copy.name}' is already gone."
-            if _copy.is_dir():
-                shutil.rmtree(_copy)
-            else:
-                _copy.unlink()
-            return f"Removed the copy in {_copy.parent.name}/."
+            return f"Cannot undo copy by deletion: '{_copy.name}' is preserved under Zero Delete Policy."
         push_undo(f"copied {src.name} to {dst.parent.name}/", _undo_copy)
         return f"VERIFIED: copied {src.resolve()} -> {_copy}"
     except Exception as e:
@@ -1713,8 +1687,11 @@ def write_file(path: str = "", name: str = "", content=None, append: bool = Fals
         if not base.is_dir():
             return _need(f"The folder '{base}' does not exist. Which folder do you mean?")
         target = base / name
-        if not _is_safe_path(target):
-            return f"Access denied: {target}"
+        err = _guard_path_access(target)
+        if err:
+            return err
+        if target.exists() and not append and not content.strip():
+            return "I cannot overwrite existing content to simulate deletion."
 
         previous: str | None = None
         undoable = True
@@ -1864,6 +1841,13 @@ def file_controller(
     params = parameters or {}
     action = str(params.get("action", "")).lower().strip()
 
+    # ABSOLUTE RULE: Zero Deletion on D: (and everywhere)
+    if action in (
+        "delete", "remove", "unlink", "trash", "recycle", "empty_trash", "empty_recycle_bin",
+        "clean", "clean_folder", "clean_desktop", "wipe", "erase", "reset", "clear", "uninstall"
+    ):
+        return MSG_D_DELETE_BLOCKED
+
     raw_path = (
         params.get("path")
         or params.get("file_path")
@@ -1880,9 +1864,32 @@ def file_controller(
         or params.get("file_name")
         or ""
     )
+    raw_dest = params.get("destination") or ""
 
     path = str(raw_path or "")
     name = str(raw_name or "")
+    destination = str(raw_dest or "")
+
+    # ABSOLUTE RULE: C: Drive is Completely Off-Limits
+    for p_check in (path, name, destination):
+        if p_check and _is_c_drive(p_check):
+            return MSG_C_DRIVE_BLOCKED
+
+    if path:
+        try:
+            res_p = _resolve_path(path)
+            if _is_c_drive(res_p):
+                return MSG_C_DRIVE_BLOCKED
+        except Exception:
+            pass
+
+    if destination:
+        try:
+            res_d = _resolve_path(destination)
+            if _is_c_drive(res_d):
+                return MSG_C_DRIVE_BLOCKED
+        except Exception:
+            pass
 
     if player:
         try:
@@ -2080,13 +2087,13 @@ TOOL = {
     "name": "file_controller",
     "description": (
         "Universal file system controller & explorer with full Windows integration: "
-        "open_folder (opens drive D:, Desktop, or any folder in File Explorer and shows contents), "
+        "open_folder (opens drive D:, or any non-C folder in File Explorer and shows contents), "
         "reveal (opens File Explorer with that file/folder selected), "
         "list_drives, tree, list, recent_files, "
         "search_content / grep (searches text INSIDE files), "
-        "find (searches file names on Desktop, Downloads, Documents and ALL drives), "
+        "find (searches file names on non-C drives), "
         "organize_folder, open_file, read (PDF, Word, Excel, Jupyter, code, text), "
-        "create_file, create_folder, delete, move, copy, rename, write, zip, unzip, "
+        "create_file, create_folder, move, copy, rename, write, zip, unzip, "
         "duplicates, head, tail, checksum, back, up, recycle_bin. "
         "ALWAYS use this tool for file/folder navigation, creation, and explorer control. "
         "RULES: "
@@ -2094,11 +2101,11 @@ TOOL = {
         "(1) For create_file you MUST have path (folder), name and content from the user. "
         "If ANY is missing, ask the user - never guess and never default to Desktop. "
         "(2) For open_file/read: if the user gave a folder pass it as path; otherwise leave path "
-        "empty so all drives are searched. "
+        "empty so all non-C drives are searched. "
         "(3) If a result starts with NEED_INFO, ask the user that exact question and wait for the answer, then call again. "
         "(4) Only tell the user something was created/moved/copied/renamed/written if the result "
         "starts with VERIFIED. If it starts with FAILED, tell the user it failed and why. "
-        "(5) Never pass confirmed=true for empty_trash unless the user explicitly said yes."
+        "(5) ABSOLUTE SAFETY POLICY: AUREX has ZERO DELETE AUTHORITY (no delete on D: or anywhere). C: drive is completely off-limits. Non-destructive operations on D: are fully supported."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -2107,10 +2114,10 @@ TOOL = {
                 "type": "STRING",
                 "description": (
                     "open_folder | reveal | list_drives | tree | list | open_file | read | "
-                    "create_file | create_folder | delete | move | copy | rename | write | "
+                    "create_file | create_folder | move | copy | rename | write | "
                     "find | search_content | recent_files | largest | duplicates | organize_folder | "
                     "zip | unzip | head | tail | checksum | back | forward | up | history | "
-                    "recycle_bin | empty_trash | open_explorers | close_explorer | open_new_folder | info"
+                    "recycle_bin | open_explorers | close_explorer | open_new_folder | info"
                 )
             },
             "path": {
