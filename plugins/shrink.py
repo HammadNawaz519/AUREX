@@ -57,13 +57,14 @@ class ShrinkPillWindow(QWidget):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFixedSize(48, 48)
+        self.setFixedSize(40, 40)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("AUREX Pill Mode\n• Click or Double-click to restore\n• Drag to reposition")
 
         self._state: str = "SLEEPING"
         self._phase: float = 0.0
         self._disp: float = 0.0           # smoothed volume strength 0..1
+        self._dot_r: float = 3.8          # animated dot radius (outward on speaking)
         self._dirty: bool = False
         self._last_t: float = time.monotonic()
         self._restoring: bool = False
@@ -127,7 +128,24 @@ class ShrinkPillWindow(QWidget):
             if self._disp < 0.005:
                 self._disp = 0.0
 
-        if self._disp > 0.0:
+        # Animate dot radius: on SPEAKING, dot eases outward with volume;
+        # on LISTENING, dot stays compact (just breathes with mic level);
+        # at rest, dot contracts back to its resting size.
+        _DOT_REST = 3.8
+        _DOT_SPEAK_MAX = 9.5   # furthest the dot travels outward when loud
+        _DOT_LISTEN_MAX = 5.2  # subtle mic-reactive growth while listening
+        if self._state == "SPEAKING":
+            target_dot = _DOT_REST + (_DOT_SPEAK_MAX - _DOT_REST) * (self._disp ** 0.6)
+            dot_rate = 8.0 if target_dot > self._dot_r else 5.5
+        elif self._state == "LISTENING":
+            target_dot = _DOT_REST + (_DOT_LISTEN_MAX - _DOT_REST) * self._disp
+            dot_rate = 12.0 if target_dot > self._dot_r else 6.0
+        else:
+            target_dot = _DOT_REST
+            dot_rate = 5.0
+        self._dot_r += (target_dot - self._dot_r) * (1.0 - math.exp(-dot_rate * dt))
+
+        if self._disp > 0.0 or abs(self._dot_r - _DOT_REST) > 0.05:
             # Butter-smooth outward travel at 120 FPS
             self._phase = (self._phase + dt * (0.35 + 0.9 * self._disp)) % 1.0
             self._dirty = True
@@ -215,13 +233,10 @@ class ShrinkPillWindow(QWidget):
         wave_span = max_ripple_r - min_r
         s = self._disp                      # 0 = silence, 1 = loud
 
-        # 1. Compact Jet-black disc
-        bg = QRadialGradient(center, max_r)
-        bg.setColorAt(0.0, QColor(14, 16, 20, 252))
-        bg.setColorAt(0.68, QColor(6, 7, 10, 254))
-        bg.setColorAt(1.0, QColor(0, 0, 0, 255))
-        painter.setBrush(QBrush(bg))
-        painter.setPen(QPen(QColor(212, 196, 168, int(45 + 40 * s)), 1.2))
+        # 1. Compact pure-black disc
+        painter.setBrush(QBrush(QColor(0, 0, 0, 255)))
+        rim_alpha = int(30 + 35 * s)
+        painter.setPen(QPen(QColor(212, 196, 168, rim_alpha), 1.0))
         painter.drawEllipse(center, max_r, max_r)
 
         # 2. Volume-driven rings: only when listening or speaking.
@@ -240,19 +255,21 @@ class ShrinkPillWindow(QWidget):
                     painter.setPen(QPen(QColor(235, 222, 200, alpha), 1.2))
                     painter.drawEllipse(center, r, r)
 
-        # 3. Centre dot: prominent, glowing, centered in small black disc
-        core_r = min_r + s * 2.5
-        glow_r = core_r + 3.5
+        # 3. Centre dot: glowing, animates outward on speaking
+        #    self._dot_r carries the smooth animated radius
+        dot_r = max(3.2, self._dot_r)
+        glow_r = dot_r + 3.0 + s * 2.0
         core = QRadialGradient(center, glow_r)
-        core.setColorAt(0.0, QColor(255, 255, 255, 245))
-        core.setColorAt(0.35, QColor(235, 220, 190, 190))
-        core.setColorAt(0.75, QColor(212, 196, 168, 70))
-        core.setColorAt(1.0, QColor(212, 196, 168, 0))
+        core.setColorAt(0.0, QColor(255, 255, 255, 240))
+        core.setColorAt(0.40, QColor(235, 220, 190, 160))
+        core.setColorAt(0.80, QColor(212, 196, 168, 45))
+        core.setColorAt(1.0, QColor(0, 0, 0, 0))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(core))
         painter.drawEllipse(center, glow_r, glow_r)
+        # Solid white core dot at animated size
         painter.setBrush(QBrush(QColor(255, 255, 255, 255)))
-        painter.drawEllipse(center, 3.8, 3.8)
+        painter.drawEllipse(center, dot_r, dot_r)
 
         painter.end()
 
