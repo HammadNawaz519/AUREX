@@ -1,0 +1,16 @@
+{
+  "turns": [
+    {
+      "speaker": "User",
+      "text": "kya hal hai bhai, shrink window ko top left pe set kardo",
+      "time": "12:20 AM"
+    },
+    {
+      "speaker": "AUREX",
+      "text": "Theek hai sir, window top left par position ho gayi hai.",
+      "time": "12:20 AM"
+    }
+  ],
+  "updated_at": "2026-10-02T00:20:20.053442",
+  "last_language": "Hindi"
+}

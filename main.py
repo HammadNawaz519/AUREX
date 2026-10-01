@@ -854,6 +854,12 @@ class JarvisLive:
         if self._wake_enabled and not self._awake:
             self.ui.write_log("SYS: I'm asleep — say 'Hey Jarvis' or tap WAKE NOW first.")
             return
+        self.ui.write_log(f"You: {text}")
+        self._session_log.append(f"User: {text}")
+        try:
+            record_chat_turn("User", text)
+        except Exception:
+            pass
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"role": "user", "parts": [{"text": text}]},
@@ -1028,6 +1034,9 @@ class JarvisLive:
         parts = [time_ctx, identity_ctx]
         if mem_str:
             parts.append(mem_str)
+        chat_ctx = format_recent_chat_for_prompt(max_turns=12)
+        if chat_ctx:
+            parts.append(chat_ctx)
         parts.append(sys_prompt)
 
         cfg = dict(
@@ -1525,6 +1534,10 @@ class JarvisLive:
                                 self._last_out_logged = ""   # new exchange
                                 self.ui.write_log(f"You: {full_in}")
                                 self._session_log.append(f"User: {full_in}")
+                                try:
+                                    record_chat_turn("User", full_in)
+                                except Exception:
+                                    pass
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
                                         "type": "log", "speaker": "user",
@@ -1544,6 +1557,10 @@ class JarvisLive:
                                 self._last_out_logged = full_out
                                 self.ui.write_log(f"{self._asst_name}: {full_out}")
                                 self._session_log.append(f"{self._asst_name}: {full_out}")
+                                try:
+                                    record_chat_turn(self._asst_name, full_out)
+                                except Exception:
+                                    pass
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
                                         "type": "log", "speaker": "jarvis",
@@ -1721,8 +1738,23 @@ class JarvisLive:
                 return
             from memory.config_manager import get_user_name
             user = get_user_name() or "sir"
+            last_state = get_last_conversation_state()
+            last_lang = last_state.get("last_language") or "English"
+            has_prev = bool(last_state.get("turns"))
+
+            if has_prev:
+                prompt_text = (
+                    f"Say a quick, natural one-sentence greeting to {user} in {last_lang} "
+                    f"stating that AUREX is back online and ready to continue from where you left off."
+                )
+            else:
+                prompt_text = (
+                    f"Say a quick, natural one-sentence greeting to {user} in {last_lang} "
+                    f"stating that AUREX is online and ready."
+                )
+
             await self.session.send_client_content(
-                turns={"role": "user", "parts": [{"text": f"Say a quick, natural one-sentence greeting to {user} stating that AUREX is online and ready."}]},
+                turns={"role": "user", "parts": [{"text": prompt_text}]},
                 turn_complete=True,
             )
         except Exception as e:
@@ -1746,7 +1778,8 @@ class JarvisLive:
             e = identity.get(k, {})
             return (e.get("value", "") if isinstance(e, dict) else str(e)).strip()
 
-        lang = _val("language")
+        last_state = get_last_conversation_state()
+        lang = _val("current_language") or _val("language") or last_state.get("last_language") or "English"
         name = _val("name")
         time_str = datetime.now().strftime("%H:%M")
 
@@ -1874,9 +1907,12 @@ class JarvisLive:
         self._session_log = []    # reset immediately so the next session starts clean
 
         memory = load_memory()
+        last_state = get_last_conversation_state()
+        cur_lang_entry = memory.get("identity", {}).get("current_language", {})
+        cur_lang = (cur_lang_entry.get("value", "") if isinstance(cur_lang_entry, dict) else str(cur_lang_entry)).strip()
         lang_entry = memory.get("identity", {}).get("language", {})
         lang = (lang_entry.get("value", "") if isinstance(lang_entry, dict) else str(lang_entry)).strip()
-        lang = lang or "English"
+        lang = cur_lang or lang or last_state.get("last_language") or "English"
 
         convo = "\n".join(log[-40:])   # cap at last 40 turns to stay within token budget
         prompt = (
