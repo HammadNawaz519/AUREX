@@ -57,7 +57,7 @@ class ShrinkPillWindow(QWidget):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFixedSize(68, 68)
+        self.setFixedSize(48, 48)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("AUREX Pill Mode\n• Click or Double-click to restore\n• Drag to reposition")
 
@@ -207,21 +207,21 @@ class ShrinkPillWindow(QWidget):
         w, h = self.width(), self.height()
         cx, cy = w / 2.0, h / 2.0
         center = QPointF(cx, cy)
-        max_r = min(w, h) / 2.0 - 4.0
+        max_r = min(w, h) / 2.0 - 2.0
 
         # Rings fade out clear of the outer rim.
-        min_r = 9.0
-        max_ripple_r = max_r - 2.5
+        min_r = 7.5
+        max_ripple_r = max_r - 2.0
         wave_span = max_ripple_r - min_r
         s = self._disp                      # 0 = silence, 1 = loud
 
-        # 1. Jet-black disc with a rim that brightens with volume
+        # 1. Compact Jet-black disc
         bg = QRadialGradient(center, max_r)
         bg.setColorAt(0.0, QColor(14, 16, 20, 252))
         bg.setColorAt(0.68, QColor(6, 7, 10, 254))
         bg.setColorAt(1.0, QColor(0, 0, 0, 255))
         painter.setBrush(QBrush(bg))
-        painter.setPen(QPen(QColor(212, 196, 168, int(45 + 40 * s)), 1.5))
+        painter.setPen(QPen(QColor(212, 196, 168, int(45 + 40 * s)), 1.2))
         painter.drawEllipse(center, max_r, max_r)
 
         # 2. Volume-driven rings: only when listening or speaking.
@@ -235,23 +235,24 @@ class ShrinkPillWindow(QWidget):
                 alpha = int(220 * ((1.0 - prog) ** 1.4) * (s ** 0.7))
                 if alpha > 3:
                     painter.setBrush(Qt.BrushStyle.NoBrush)
-                    painter.setPen(QPen(QColor(212, 196, 168, int(alpha * 0.35)), 3.0))
+                    painter.setPen(QPen(QColor(212, 196, 168, int(alpha * 0.35)), 2.4))
                     painter.drawEllipse(center, r, r)
-                    painter.setPen(QPen(QColor(235, 222, 200, alpha), 1.5))
+                    painter.setPen(QPen(QColor(235, 222, 200, alpha), 1.2))
                     painter.drawEllipse(center, r, r)
 
-        # 3. Centre dot: prominent and clear, swells slightly with volume
-        core_r = min_r + s * 3.5
-        core = QRadialGradient(center, core_r + 5.0)
+        # 3. Centre dot: prominent, glowing, centered in small black disc
+        core_r = min_r + s * 2.5
+        glow_r = core_r + 3.5
+        core = QRadialGradient(center, glow_r)
         core.setColorAt(0.0, QColor(255, 255, 255, 245))
         core.setColorAt(0.35, QColor(235, 220, 190, 190))
         core.setColorAt(0.75, QColor(212, 196, 168, 70))
         core.setColorAt(1.0, QColor(212, 196, 168, 0))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(core))
-        painter.drawEllipse(center, core_r + 5.0, core_r + 5.0)
+        painter.drawEllipse(center, glow_r, glow_r)
         painter.setBrush(QBrush(QColor(255, 255, 255, 255)))
-        painter.drawEllipse(center, 4.2, 4.2)
+        painter.drawEllipse(center, 3.8, 3.8)
 
         painter.end()
 
