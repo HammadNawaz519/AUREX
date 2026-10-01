@@ -470,8 +470,9 @@ class HudCanvas(QWidget):
         self._base_halo  = 55.0
 
         self._tmr = QTimer(self)
+        self._tmr.setTimerType(Qt.TimerType.PreciseTimer)
         self._tmr.timeout.connect(self._step)
-        self._tmr.start(16)
+        self._tmr.start(8)
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         """Ask the avatar to look somewhere for a moment (see HoloAvatar.glance)."""
@@ -854,13 +855,11 @@ class HudCanvas(QWidget):
         W, H = self.width(), self.height()
         cx, cy = W / 2.0, H / 2.0
         fw = min(W, H)
-
         if is_circle:
-            # Pill Mode: clean dark background with ONLY wave animations!
-            # Nothing inside except dynamic glowing audio waves / ripples
+            # Pill Mode: ripples + wave react to live volume (mic while listening,
+            # assistant voice while speaking). Silence = just the centre dot.
             p.fillRect(self.rect(), qcol("#060B12"))
 
-            # Dynamic color reactive to assistant state
             if self.muted:
                 accent_col = QColor(239, 68, 68)
             elif self.speaking:
@@ -872,6 +871,13 @@ class HudCanvas(QWidget):
             else:
                 accent_col = QColor(0, 200, 255)
 
+            # Smoothed live level (0..1). Boosted a little because mic levels are small.
+            level = 0.0 if self.muted else min(1.0, self._amp_disp * 1.6)
+            GATE = 0.05
+            # 0 at/below the gate, 1 at full volume
+            strength = max(0.0, min(1.0, (level - GATE) / (1.0 - GATE)))
+            active = strength > 0.0
+
             # Central ambient radial glow
             ambient = QRadialGradient(cx, cy, fw * 0.5)
             ambient.setColorAt(0.0, QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 42))
@@ -881,54 +887,52 @@ class HudCanvas(QWidget):
             p.drawEllipse(QPointF(cx, cy), fw * 0.48, fw * 0.48)
 
             phase = getattr(self.window(), '_pill_wave_phase', self._core_phase * 2.5)
-            amp = getattr(self, '_live_amp', 0.2)
 
-            # 3 Expanding concentric ripple wave rings
-            for ring_idx in range(3):
-                ring_phase = (phase + ring_idx * (math.pi * 2.0 / 3.0)) % (math.pi * 2.0)
-                progress = ring_phase / (math.pi * 2.0)
-                r_ring = (fw * 0.14) + progress * (fw * 0.32) + (amp * fw * 0.08)
-                alpha = int(max(0, min(220, (1.0 - progress) * (140 + amp * 100))))
-                pen_col = QColor(accent_col.red(), accent_col.green(), accent_col.blue(), alpha)
-                pen = QPen(pen_col, 1.8 + (1.0 - progress) * 1.5)
-                p.setPen(pen)
+            if active:
+                # Ripple rings: louder = they travel further and shine brighter
+                reach = 0.25 + 0.75 * strength
+                for ring_idx in range(3):
+                    ring_phase = (phase + ring_idx * (math.pi * 2.0 / 3.0)) % (math.pi * 2.0)
+                    progress = ring_phase / (math.pi * 2.0)
+                    r_ring = (fw * 0.14) + progress * (fw * 0.32) * reach
+                    alpha = int(max(0, min(220, (1.0 - progress) * 230 * (strength ** 0.7))))
+                    pen = QPen(QColor(accent_col.red(), accent_col.green(), accent_col.blue(), alpha),
+                               1.8 + (1.0 - progress) * 1.5)
+                    p.setPen(pen)
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawEllipse(QPointF(cx, cy), r_ring, r_ring)
+
+                # Voice wave: height scales with volume
+                wave_path = QPainterPath()
+                points = 36
+                wave_w = fw * 0.72
+                x_start = cx - wave_w / 2.0
+                x_step = wave_w / points
+                base_amp = fw * (0.22 * strength)
+                for pt in range(points + 1):
+                    px = x_start + pt * x_step
+                    env = math.sin((pt / points) * math.pi)
+                    py = cy + env * base_amp * (
+                        0.7 * math.sin(phase * 1.8 + pt * 0.35) +
+                        0.3 * math.sin(phase * 3.1 - pt * 0.25)
+                    )
+                    if pt == 0:
+                        wave_path.moveTo(px, py)
+                    else:
+                        wave_path.lineTo(px, py)
+                wave_alpha = int(60 + 170 * strength)
+                p.setPen(QPen(QColor(accent_col.red(), accent_col.green(), accent_col.blue(), wave_alpha), 2.2))
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawEllipse(QPointF(cx, cy), r_ring, r_ring)
+                p.drawPath(wave_path)
 
-            # Dynamic fluid voice soundwave across center
-            wave_path = QPainterPath()
-            points = 36
-            wave_w = fw * 0.72
-            x_start = cx - wave_w / 2.0
-            x_step = wave_w / points
-            base_amp = fw * (0.06 + amp * 0.16)
-
-            for pt in range(points + 1):
-                px = x_start + pt * x_step
-                env = math.sin((pt / points) * math.pi)
-                py = cy + env * base_amp * (
-                    0.7 * math.sin(phase * 1.8 + pt * 0.35) +
-                    0.3 * math.sin(phase * 3.1 - pt * 0.25)
-                )
-                if pt == 0:
-                    wave_path.moveTo(px, py)
-                else:
-                    wave_path.lineTo(px, py)
-
-            wave_pen = QPen(QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 230), 2.2)
-            p.setPen(wave_pen)
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawPath(wave_path)
-
-            # Central glowing core dot
-            core_r = max(3.5, fw * (0.045 + amp * 0.035))
+            # Central dot (always shown; grows slightly with volume)
+            core_r = max(3.5, fw * (0.045 + strength * 0.035))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(accent_col))
             p.drawEllipse(QPointF(cx, cy), core_r, core_r)
 
             # Outer subtle pill border ring
-            border_pen = QPen(QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 90), 1.5)
-            p.setPen(border_pen)
+            p.setPen(QPen(QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 90), 1.5))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QPointF(cx, cy), fw * 0.48, fw * 0.48)
 

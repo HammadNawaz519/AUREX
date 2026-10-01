@@ -1572,6 +1572,8 @@ class JarvisLive:
                         await self._flush_pending_vision()
         except Exception as e:
             print(f"[AUREX] ❌ Recv: {e}")
+            if "1011" in str(e) or "ConnectionClosed" in type(e).__name__:
+                self._resume_handle = None
             traceback.print_exc()
             raise
 
@@ -1718,9 +1720,9 @@ class JarvisLive:
                 return
             from memory.config_manager import get_user_name
             user = get_user_name() or "sir"
-            await self.session.send(
-                input=f"Say a quick, natural one-sentence greeting to {user} stating that AUREX is online and ready.",
-                end_of_turn=True,
+            await self.session.send_client_content(
+                turns={"role": "user", "parts": [{"text": f"Say a quick, natural one-sentence greeting to {user} stating that AUREX is online and ready."}]},
+                turn_complete=True,
             )
         except Exception as e:
             print(f"[AUREX] Startup greeting notice: {e}")
@@ -2195,6 +2197,7 @@ class JarvisLive:
                     or "handle" in str(e).lower()
                     or "INVALID_ARGUMENT" in str(e)
                     or "NOT_FOUND" in str(e)
+                    or "1011" in str(e)
                 ):
                     print("[AUREX] 🔗 Resumption handle rejected — starting a fresh session")
                     self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")

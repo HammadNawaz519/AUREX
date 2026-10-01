@@ -1,9 +1,21 @@
 """
 AUREX Plugin: Shrink to Floating Pill Bubble
 ============================================
-Provides smooth, reliable shrinking of the main AUREX window into a sleek,
-compact floating black desktop pill bubble with a center-to-outwards wave animation,
-and seamless restoring back to the full window.
+Shrinks the main AUREX window into a compact floating black pill bubble and
+restores it back to the full window.
+
+The pill reacts to the LIVE VOLUME (microphone while you speak, the assistant's
+voice while it speaks): rings and wave travel outward in proportion to the
+strength of the sound. In silence only the centre dot is shown. The ripples
+never reach the word "AUREX".
+
+Performance / stability notes
+-----------------------------
+* The signal bridge lives on the GUI thread and uses real slots, so widgets are
+  never created or shown from a worker thread (this was the cause of the
+  blinking / momentary freezes).
+* The pill only repaints (~30 fps) while there is actual sound, plus one final
+  repaint to clear the rings. In silence it does not repaint at all.
 """
 
 from __future__ import annotations
@@ -14,24 +26,28 @@ import sys
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, QObject, pyqtSignal
+from PyQt6.QtCore import (
+    Qt, QTimer, QRectF, QPointF, QObject, pyqtSignal, pyqtSlot
+)
 from PyQt6.QtGui import (
     QPainter, QBrush, QColor, QPen, QRadialGradient, QFont
 )
 from PyQt6.QtWidgets import QWidget, QApplication
 
 
+# ── Tuning ───────────────────────────────────────────────────────────────────
+_GATE = 0.05        # volume below this = silence (raise to e.g. 0.08 if noisy)
+_GAIN = 1.6         # boosts small microphone levels
+
+
 # ── Global Singleton Instances ───────────────────────────────────────────────
-_pill_window: Optional[ShrinkPillWindow] = None
+_pill_window: Optional["ShrinkPillWindow"] = None
 _main_window: Optional[QWidget] = None
 _is_transitioning: bool = False
 
 
 class ShrinkPillWindow(QWidget):
-    """
-    A compact, frameless, floating circular black pill window that sticks to the
-    desktop with a mesmerizing center-to-outwards radiant wave animation.
-    """
+    """Compact frameless floating pill that reacts to live audio volume."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -41,56 +57,114 @@ class ShrinkPillWindow(QWidget):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFixedSize(124, 124)
+        self.setFixedSize(68, 68)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("AUREX Pill Mode\n• Click or Double-click to restore\n• Drag to reposition")
 
         self._state: str = "SLEEPING"
         self._phase: float = 0.0
+        self._disp: float = 0.0           # smoothed volume strength 0..1
+        self._dirty: bool = False
+        self._last_t: float = time.monotonic()
         self._restoring: bool = False
+        self._dragging: bool = False
+
         self._timer: QTimer = QTimer(self)
-        self._timer.setInterval(16)  # ~60 fps smooth wave
+        self._timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._timer.setInterval(8)       # 120+ FPS high-refresh rate
         self._timer.timeout.connect(self._on_tick)
 
         self._position_bottom_right()
 
-    def set_state(self, state: str):
-        """Update active state. Ripples only animate when listening or speaking."""
-        self._state = (state or "").upper()
-        if self._state in ("LISTENING", "SPEAKING"):
-            self.start_wave()
-        else:
-            self.stop_wave()
-        self.update()
+    # The timer only runs while the pill is actually on screen.
+    def showEvent(self, event):
+        self._last_t = time.monotonic()
+        self._timer.start()
+        super().showEvent(event)
 
-    def _position_bottom_right(self):
-        """Stick to the desktop bottom-right corner with a sleek margin."""
-        app = QApplication.instance()
-        if not app:
-            return
-        screen = app.primaryScreen()
-        if screen:
-            ag = screen.availableGeometry()
-            margin_x = 28
-            margin_y = 48
-            self.move(
-                ag.right() - self.width() - margin_x,
-                ag.bottom() - self.height() - margin_y
-            )
-
-    def _on_tick(self):
-        # Calm, luxurious wave expansion rate
-        self._phase = (self._phase + 0.009) % 1.0
-        self.update()
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
 
     def start_wave(self):
         if not self._timer.isActive():
             self._timer.start()
 
     def stop_wave(self):
-        if self._timer.isActive():
-            self._timer.stop()
+        self._timer.stop()
 
+    def set_state(self, state: str):
+        self._state = (state or "").upper()
+        self.update()
+
+    # ── live volume ──────────────────────────────────────────────────────────
+    def _read_level(self) -> float:
+        """Smoothed 0..1 level the HUD already computes from the audio threads."""
+        win = _find_main_window()
+        hud = getattr(win, "hud", None)
+        if hud is None or getattr(hud, "muted", False):
+            return 0.0
+        try:
+            return float(getattr(hud, "_amp_disp", 0.0))
+        except Exception:
+            return 0.0
+
+    def _on_tick(self):
+        now = time.monotonic()
+        dt = max(0.001, min(0.05, now - self._last_t))
+        self._last_t = now
+
+        is_active = self._state in ("LISTENING", "SPEAKING")
+        if is_active:
+            lvl = min(1.0, self._read_level() * _GAIN)
+            vol_boost = max(0.0, (lvl - _GATE) / (1.0 - _GATE))
+            target = min(1.0, 0.32 + 0.68 * vol_boost)
+            # Smooth attack and release tuned for 120 FPS
+            rate = 14.0 if target > self._disp else 4.0
+            self._disp += (target - self._disp) * (1.0 - math.exp(-rate * dt))
+        else:
+            self._disp += (0.0 - self._disp) * (1.0 - math.exp(-6.0 * dt))
+            if self._disp < 0.005:
+                self._disp = 0.0
+
+        if self._disp > 0.0:
+            # Butter-smooth outward travel at 120 FPS
+            self._phase = (self._phase + dt * (0.35 + 0.9 * self._disp)) % 1.0
+            self._dirty = True
+            self.update()
+        elif self._dirty:
+            # one last repaint to clear the rings, then stay idle
+            self._dirty = False
+            self.update()
+
+    # ── placement ────────────────────────────────────────────────────────────
+    def _position_bottom_right(self):
+        app = QApplication.instance()
+        if not app:
+            return
+        screen = app.primaryScreen()
+        if screen:
+            ag = screen.availableGeometry()
+            self.move(
+                ag.right() - self.width() - 28,
+                ag.bottom() - self.height() - 48
+            )
+
+    def _snap_to_edge(self):
+        app = QApplication.instance()
+        screen = app.primaryScreen() if app else None
+        if not screen:
+            return
+        ag = screen.availableGeometry()
+        pos = self.frameGeometry().topLeft()
+        cx = pos.x() + self.width() / 2
+        cy = pos.y() + self.height() / 2
+        margin_x, margin_y = 18, 30
+        snap_x = ag.left() + margin_x if cx < ag.center().x() else ag.right() - self.width() - margin_x
+        snap_y = ag.top() + margin_y if cy < ag.center().y() else ag.bottom() - self.height() - margin_y
+        self.move(snap_x, snap_y)
+
+    # ── mouse ────────────────────────────────────────────────────────────────
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
@@ -108,135 +182,81 @@ class ShrinkPillWindow(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            if not getattr(self, "_dragging", False):
-                if not getattr(self, "_restoring", False):
+            if not self._dragging:
+                if not self._restoring:
                     self._restoring = True
-                    # Cleanly release any mouse grab and defer restore to the next event loop tick
-                    try:
-                        self.releaseMouse()
-                    except Exception:
-                        pass
                     QTimer.singleShot(10, restore)
             else:
-                # Snap to nearest screen edge
                 self._snap_to_edge()
             self._dragging = False
             event.accept()
 
-    def _snap_to_edge(self):
-        """Snap pill to the nearest screen edge corner for tidy positioning."""
-        app = QApplication.instance()
-        if not app:
-            return
-        screen = app.primaryScreen()
-        if not screen:
-            return
-        ag = screen.availableGeometry()
-        pos = self.frameGeometry().topLeft()
-        cx = pos.x() + self.width() / 2
-        cy = pos.y() + self.height() / 2
-        margin_x, margin_y = 18, 30
-        # Determine nearest horizontal & vertical edge
-        snap_x = ag.left() + margin_x if cx < ag.center().x() else ag.right() - self.width() - margin_x
-        snap_y = ag.top() + margin_y if cy < ag.center().y() else ag.bottom() - self.height() - margin_y
-        self.move(snap_x, snap_y)
-
     def mouseDoubleClickEvent(self, event):
-        if not getattr(self, "_restoring", False):
+        if not self._restoring:
             self._restoring = True
-            try:
-                self.releaseMouse()
-            except Exception:
-                pass
             QTimer.singleShot(10, restore)
         event.accept()
 
+    # ── painting ─────────────────────────────────────────────────────────────
     def paintEvent(self, event):
         painter = QPainter(self)
+        if not painter.isActive():
+            return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
-        w = self.width()
-        h = self.height()
-        cx = w / 2.0
-        cy = h / 2.0
+        w, h = self.width(), self.height()
+        cx, cy = w / 2.0, h / 2.0
         center = QPointF(cx, cy)
-        max_r = min(w, h) / 2.0 - 5.0
+        max_r = min(w, h) / 2.0 - 4.0
 
-        # Ripple waves fade completely into the disc before reaching the word "AUREX"
-        # The word AUREX sits at y = h - 23 (101px), which is 39px from center.
-        # Setting max_ripple_r to 35px ensures waves fade out 4px clear above the text.
-        max_ripple_r = (h - 23.0) - cy - 4.0
-        min_r = 6.0
+        # Rings fade out clear of the outer rim.
+        min_r = 9.0
+        max_ripple_r = max_r - 2.5
         wave_span = max_ripple_r - min_r
+        s = self._disp                      # 0 = silence, 1 = loud
 
-        # ── 1. Deep Jet-Black Circular Disc ──────────────────────────────────
-        bg_grad = QRadialGradient(center, max_r)
-        bg_grad.setColorAt(0.0, QColor(14, 16, 20, 252))
-        bg_grad.setColorAt(0.65, QColor(6, 7, 10, 254))
-        bg_grad.setColorAt(1.0, QColor(0, 0, 0, 255))
-        painter.setBrush(QBrush(bg_grad))
-
-        # Breathing outer border rim with warm beige/gold tone
-        is_active = self._state in ("LISTENING", "SPEAKING")
-        border_alpha = int(60 + 35 * math.sin(self._phase * 2.0 * math.pi)) if is_active else 45
-        border_pen = QPen(QColor(212, 196, 168, border_alpha), 1.5)
-        painter.setPen(border_pen)
+        # 1. Jet-black disc with a rim that brightens with volume
+        bg = QRadialGradient(center, max_r)
+        bg.setColorAt(0.0, QColor(14, 16, 20, 252))
+        bg.setColorAt(0.68, QColor(6, 7, 10, 254))
+        bg.setColorAt(1.0, QColor(0, 0, 0, 255))
+        painter.setBrush(QBrush(bg))
+        painter.setPen(QPen(QColor(212, 196, 168, int(45 + 40 * s)), 1.5))
         painter.drawEllipse(center, max_r, max_r)
 
-        # ── 2. Concentric Waves Radiating from Center to Outwards ────────────
-        # Ripples ONLY appear and animate when listening or speaking, and fade out
-        # completely before reaching the word "AUREX"
-        if is_active:
+        # 2. Volume-driven rings: only when listening or speaking.
+        #    Louder = travel further, shine brighter, move faster.
+        if s > 0.0:
+            reach = 0.3 + 0.7 * s
             num_waves = 4
             for i in range(num_waves):
-                # Staggered phase offset for each wave ring
-                prog = (self._phase + (i / float(num_waves))) % 1.0
-
-                # Radius expands from min_r (center) up to max_ripple_r
-                r = min_r + (prog ** 0.85) * wave_span
-
-                # Opacity fades naturally and dissolves to 0 before hitting the text
-                fade = max(0.0, 1.0 - prog)
-                alpha = int(220 * (fade ** 1.4))
-
+                prog = (self._phase + i / float(num_waves)) % 1.0
+                r = min_r + (prog ** 0.85) * wave_span * reach
+                alpha = int(220 * ((1.0 - prog) ** 1.4) * (s ** 0.7))
                 if alpha > 3:
-                    # Soft diffuse outer glow for each wave ring
-                    glow_pen = QPen(QColor(212, 196, 168, int(alpha * 0.35)), 3.2)
-                    painter.setPen(glow_pen)
                     painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(QPen(QColor(212, 196, 168, int(alpha * 0.35)), 3.0))
+                    painter.drawEllipse(center, r, r)
+                    painter.setPen(QPen(QColor(235, 222, 200, alpha), 1.5))
                     painter.drawEllipse(center, r, r)
 
-                    # Sharp luminous cream wave line
-                    wave_pen = QPen(QColor(235, 222, 200, alpha), 1.5)
-                    painter.setPen(wave_pen)
-                    painter.drawEllipse(center, r, r)
-
-        # ── 3. Pulsing Central Energy Nexus ──────────────────────────────────
-        pulse = (0.5 + 0.5 * math.sin(self._phase * 4.0 * math.pi)) if is_active else 0.2
-        core_r = min_r + pulse * 2.5
-
-        core_grad = QRadialGradient(center, core_r + 6)
-        core_grad.setColorAt(0.0, QColor(255, 255, 255, 245))
-        core_grad.setColorAt(0.35, QColor(235, 220, 190, 190))
-        core_grad.setColorAt(0.75, QColor(212, 196, 168, 70))
-        core_grad.setColorAt(1.0, QColor(212, 196, 168, 0))
-
+        # 3. Centre dot: prominent and clear, swells slightly with volume
+        core_r = min_r + s * 3.5
+        core = QRadialGradient(center, core_r + 5.0)
+        core.setColorAt(0.0, QColor(255, 255, 255, 245))
+        core.setColorAt(0.35, QColor(235, 220, 190, 190))
+        core.setColorAt(0.75, QColor(212, 196, 168, 70))
+        core.setColorAt(1.0, QColor(212, 196, 168, 0))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(core_grad))
-        painter.drawEllipse(center, core_r + 6, core_r + 6)
-
-        # Micro bright center point
+        painter.setBrush(QBrush(core))
+        painter.drawEllipse(center, core_r + 5.0, core_r + 5.0)
         painter.setBrush(QBrush(QColor(255, 255, 255, 255)))
-        painter.drawEllipse(center, 2.2, 2.2)
+        painter.drawEllipse(center, 4.2, 4.2)
 
-        # ── 4. Elegant AUREX Accent ──────────────────────────────────────────
-        painter.setFont(QFont("Segoe UI", 6, QFont.Weight.DemiBold))
-        painter.setPen(QPen(QColor(212, 196, 168, 120)))
-        painter.drawText(QRectF(0, h - 23, w, 14), Qt.AlignmentFlag.AlignCenter, "AUREX")
+        painter.end()
 
 
-# ── Internal Window Control (Runs on Qt Main Thread via Signal Bridge) ──────
+# ── Internal Window Control (always runs on the Qt GUI thread) ───────────────
 
 class _ShrinkBridge(QObject):
     shrink_sig = pyqtSignal()
@@ -245,9 +265,25 @@ class _ShrinkBridge(QObject):
 
     def __init__(self):
         super().__init__()
-        self.shrink_sig.connect(_do_shrink)
-        self.restore_sig.connect(_do_restore)
-        self.state_sig.connect(_do_set_state)
+        app = QApplication.instance()
+        if app is not None:
+            # Live on the GUI thread FIRST, so slots below never run on a worker.
+            self.moveToThread(app.thread())
+        self.shrink_sig.connect(self._on_shrink)
+        self.restore_sig.connect(self._on_restore)
+        self.state_sig.connect(self._on_state)
+
+    @pyqtSlot()
+    def _on_shrink(self):
+        _do_shrink()
+
+    @pyqtSlot()
+    def _on_restore(self):
+        _do_restore()
+
+    @pyqtSlot(str)
+    def _on_state(self, state: str):
+        _do_set_state(state)
 
 
 _bridge: Optional[_ShrinkBridge] = None
@@ -257,23 +293,16 @@ def _get_bridge() -> _ShrinkBridge:
     global _bridge
     if _bridge is None:
         _bridge = _ShrinkBridge()
-        app = QApplication.instance()
-        if app and app.thread():
-            try:
-                _bridge.moveToThread(app.thread())
-            except Exception:
-                pass
     return _bridge
 
 
 def _do_set_state(state: str):
-    global _pill_window
     if _pill_window is not None:
         _pill_window.set_state(state)
 
 
 def set_pill_state(state: str) -> bool:
-    """Thread-safe update of the pill bubble state (LISTENING, SPEAKING, SLEEPING)."""
+    """Thread-safe update of the pill state (LISTENING, SPEAKING, SLEEPING...)."""
     app = QApplication.instance()
     if not app:
         return False
@@ -305,14 +334,14 @@ def _find_main_window() -> Optional[QWidget]:
 
 
 def _do_shrink():
-    global _pill_window, _main_window, _is_transitioning
+    global _pill_window, _is_transitioning
     if _is_transitioning:
         return
     _is_transitioning = True
     try:
         main_win = _find_main_window()
         if main_win is not None:
-            # If quick drawer is open, close/hide it so no animation gets stuck
+            # Close the quick drawer so no animation gets stuck
             if hasattr(main_win, "_quick_drawer") and main_win._quick_drawer is not None:
                 try:
                     main_win._quick_drawer.hide()
@@ -343,7 +372,7 @@ def _do_shrink():
 
 
 def _do_restore():
-    global _pill_window, _main_window, _is_transitioning
+    global _pill_window, _is_transitioning
     if _is_transitioning:
         return
     _is_transitioning = True
@@ -354,7 +383,6 @@ def _do_restore():
 
         main_win = _find_main_window()
         if main_win is not None:
-            # Un-minimize and restore normal window state
             main_win.setWindowState(
                 (main_win.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive
             )
@@ -397,7 +425,7 @@ def _do_restore():
         _is_transitioning = False
 
 
-# ── Public API (100% thread-safe to call from any background worker thread) ──
+# ── Public API (thread-safe to call from any worker thread) ──────────────────
 
 def shrink() -> bool:
     """Shrink AUREX into the compact floating pill bubble."""
@@ -409,7 +437,7 @@ def shrink() -> bool:
 
 
 def restore() -> bool:
-    """Restore AUREX from pill bubble back to full window."""
+    """Restore AUREX from pill bubble back to the full window."""
     app = QApplication.instance()
     if not app:
         return False
@@ -419,16 +447,13 @@ def restore() -> bool:
 
 def toggle() -> bool:
     """Toggle between shrunk pill bubble and full window."""
-    global _pill_window
     if _pill_window is not None and _pill_window.isVisible():
         return restore()
-    else:
-        return shrink()
+    return shrink()
 
 
 def get_state() -> str:
-    """Returns 'pill' if currently shrunk, 'full' if full window is active."""
-    global _pill_window
+    """Returns 'pill' if currently shrunk, 'full' if the full window is active."""
     if _pill_window is not None and _pill_window.isVisible():
         return "pill"
     return "full"
@@ -439,7 +464,7 @@ def get_state() -> str:
 PLUGIN = {
     "name": "shrink",
     "description": (
-        "Shrink AUREX into a compact floating desktop pill bubble with a center-to-outwards radiant wave animation, "
+        "Shrink AUREX into a compact floating desktop pill bubble whose rings react to live voice volume, "
         "or restore it back to the full window. Can also toggle between the two modes, or check the current state. "
         "ALWAYS invoke this tool (and NEVER minimize active desktop windows or call computer_settings) "
         "when user says: "
@@ -471,12 +496,9 @@ PLUGIN = {
 
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
-    """
-    Plugin execution entrypoint called by AUREX / Gemini Live.
-    """
+    """Plugin execution entrypoint called by AUREX / Gemini Live."""
     action = str(parameters.get("action", "")).strip().lower()
 
-    # State query
     if any(k in action for k in ("state", "mode", "am i", "current", "status", "check")):
         current = get_state()
         result_text = f"AUREX is currently in {'pill (mini) mode' if current == 'pill' else 'full window mode'}."
@@ -486,7 +508,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         restore()
         result_text = "Restored AUREX to full window."
 
-    elif any(k in action for k in ("toggle",)):
+    elif "toggle" in action:
         toggle()
         state = get_state()
         result_text = f"Toggled AUREX — now in {'pill (mini) mode' if state == 'pill' else 'full window mode'}."
