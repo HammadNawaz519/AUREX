@@ -2413,6 +2413,8 @@ class DesktopFallbackRouter:
         if action in ("read", "extract", "summary"):
             ocr_text = DesktopFallbackRouter._read_desktop_ocr()
             if ocr_text:
+                if len(ocr_text) > 1500:
+                    ocr_text = ocr_text[:1500] + "\n...[truncated]"
                 return True, f"Desktop Screen Content:\n{ocr_text}"
             return False, "Could not extract text from current desktop screen."
 

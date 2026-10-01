@@ -1283,7 +1283,13 @@ class JarvisLive:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[AUREX] 📤 {name} → {str(result)[:80]}")
+        # Sanitize and safely limit response length to prevent 1011 WebSocket frame aborts
+        res_str = str(result) if result is not None else "Done."
+        res_str = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", res_str)
+        if len(res_str) > 2000:
+            res_str = res_str[:2000] + "\n...[truncated for live voice session]"
+
+        print(f"[AUREX] 📤 {name} → {res_str[:80]}")
 
         # A tool that declared itself NON_BLOCKING also says when its answer may
         # re-enter the conversation. Without this the model finishes whatever it
@@ -1296,7 +1302,7 @@ class JarvisLive:
         _extra = {"scheduling": _sched} if _sched else {}
         return types.FunctionResponse(
             id=fc.id, name=name,
-            response={"result": result},
+            response={"result": res_str},
             **_extra
         )
 
@@ -1311,7 +1317,7 @@ class JarvisLive:
             await self.session.send_realtime_input(
                 audio=types.Blob(
                     data=msg["data"],
-                    mime_type=msg.get("mime_type", "audio/pcm"),
+                    mime_type=msg.get("mime_type", "audio/pcm;rate=16000"),
                 )
             )
 
@@ -1353,7 +1359,7 @@ class JarvisLive:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
+                    {"data": data, "mime_type": "audio/pcm;rate=16000"}
                 )
                 # Feed the live mic level to the HUD so the waveform reacts to
                 # the user's actual voice while listening. Purely cosmetic — any
@@ -1745,12 +1751,14 @@ class JarvisLive:
             if has_prev:
                 prompt_text = (
                     f"Say a quick, natural one-sentence greeting to {user} in {last_lang} "
-                    f"stating that AUREX is back online and ready to continue from where you left off."
+                    f"stating that AUREX is back online and ready to continue from where you left off. "
+                    "Keep it to 1 short sentence max. Do not call any tools."
                 )
             else:
                 prompt_text = (
                     f"Say a quick, natural one-sentence greeting to {user} in {last_lang} "
-                    f"stating that AUREX is online and ready."
+                    f"stating that AUREX is online and ready. "
+                    "Keep it to 1 short sentence max. Do not call any tools."
                 )
 
             await self.session.send_client_content(
@@ -2238,18 +2246,17 @@ class JarvisLive:
                 # assistant would never come back at all: the feature meant to
                 # survive a reconnect would be the thing preventing one. Drop it
                 # once and let the next attempt start clean.
-                if _resumed_with and (
-                    "resum" in err_str.lower()
-                    or "handle" in err_str.lower()
-                    or "INVALID_ARGUMENT" in err_str
-                    or "NOT_FOUND" in err_str
-                    or "1011" in err_str
-                    or "1008" in err_str
-                    or "aborted" in err_str.lower()
-                ):
-                    print("[AUREX] 🔗 Resumption handle rejected — starting a fresh session")
-                    self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")
+                # Resumption handle failure OR any 1011/1008/internal error — drop handle unconditionally
+                is_internal_err = any(k in err_str.lower() for k in ("1011", "1008", "internal error", "aborted"))
+                is_handle_err   = any(k in err_str.lower() for k in ("resum", "handle", "not_found"))
+                if is_internal_err or is_handle_err or _resumed_with:
                     self._resume_handle = None
+                    if _resumed_with:
+                        print("[AUREX] 🔗 Resumption handle rejected — starting a fresh session")
+                        self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")
+                    elif is_internal_err:
+                        print("[AUREX] ⚠️ Internal server error (1011) — reset session handle to prevent loop")
+                        self.ui.write_log("SYS: Reconnecting on fresh session...")
                     self._conn_backoff = 0
                     continue
 
