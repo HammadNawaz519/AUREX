@@ -3281,7 +3281,8 @@ class MainWindow(QMainWindow):
         self._confirm_hide_sig.connect(self._hide_confirm_banner)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
-        self._clipboard_sig.connect(self._show_clipboard_panel)
+        # Clipboard panel auto-show disabled (user request: no external popups)
+        # self._clipboard_sig.connect(self._show_clipboard_panel)
         self._wake_dl_sig.connect(self._on_wake_install_done)
         self._quiz_sig.connect(self._show_quiz)
         self._quiz_hide_sig.connect(self._hide_quiz)
@@ -3292,9 +3293,10 @@ class MainWindow(QMainWindow):
         self._cam_preview = _CameraPreview(self.centralWidget())
 
         # Clipboard panel (child of central widget, bottom-center)
+        # Auto-show disabled — panel is kept but never triggered automatically.
         self._clipboard_panel = ClipboardPanel(self.centralWidget())
         self._clipboard_panel.action_requested.connect(self._on_clipboard_action)
-        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
+        # QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)  # disabled
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
