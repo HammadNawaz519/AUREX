@@ -306,6 +306,17 @@ def save_brief_enabled(enabled: bool) -> None:
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 
+def get_start_in_pill() -> bool:
+    """Whether AUREX defaults to the compact floating pill bubble on startup and sleep resume."""
+    return bool(load_api_keys().get("start_in_pill", True))
+
+
+def save_start_in_pill(enabled: bool) -> None:
+    """Persist whether AUREX defaults to pill mode on startup and sleep resume."""
+    _save_flag("start_in_pill", bool(enabled))
+
+
+
 # ── Audio devices ────────────────────────────────────────────────────────────
 # Stored as device NAMES, not sounddevice indices. Indices shift every time a
 # USB device is plugged in or removed, so a saved index silently starts pointing

@@ -3246,6 +3246,8 @@ class MainWindow(QMainWindow):
         self._update_autostart_btn(self._check_autostart())
         from memory.config_manager import get_brief_enabled as _gbe
         self._update_brief_btn(_gbe())
+        from memory.config_manager import get_start_in_pill as _gsp
+        self._update_start_in_pill_btn(_gsp())
 
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
@@ -4189,6 +4191,13 @@ class MainWindow(QMainWindow):
         self._autostart_btn.clicked.connect(self._toggle_autostart)
         lay.addWidget(self._autostart_btn)
 
+        self._pill_startup_btn = QPushButton("◈  DEFAULT: PILL MODE")
+        self._pill_startup_btn.setFixedHeight(26)
+        self._pill_startup_btn.setFont(QFont("Segoe UI", 7))
+        self._pill_startup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._pill_startup_btn.clicked.connect(self._toggle_start_in_pill)
+        lay.addWidget(self._pill_startup_btn)
+
         pill_btn = QPushButton("⊙  MINI PILL BUBBLE")
         pill_btn.setFixedHeight(26)
         pill_btn.setFont(QFont("Segoe UI", 7))
@@ -4313,6 +4322,8 @@ class MainWindow(QMainWindow):
 
         if new_checked:
             self._refresh_wake_btns()   # resolve wake state on open (lazy)
+            from memory.config_manager import get_start_in_pill as _gsp
+            self._update_start_in_pill_btn(_gsp())
             start_geo = QRect(8, 26, _W, _H)
             self._quick_drawer.setGeometry(start_geo)
             self._drawer_eff.setOpacity(0.0)
@@ -5028,6 +5039,39 @@ class MainWindow(QMainWindow):
                 QPushButton:hover { background: #FFFFFF; color: #0F172A; border-color: #CBD5E1; }
             """)
 
+    def _toggle_start_in_pill(self):
+        from memory.config_manager import get_start_in_pill, save_start_in_pill
+        cur = get_start_in_pill()
+        new_val = not cur
+        save_start_in_pill(new_val)
+        self._update_start_in_pill_btn(new_val)
+        mode_str = "PILL BUBBLE" if new_val else "FULL WINDOW"
+        self._log.append_log(f"SYS: Default mode for startup & sleep wake: {mode_str}.")
+
+    def _update_start_in_pill_btn(self, enabled: bool):
+        if not hasattr(self, '_pill_startup_btn'):
+            return
+        if enabled:
+            self._pill_startup_btn.setText("◈  DEFAULT: PILL MODE")
+            self._pill_startup_btn.setStyleSheet("""
+                QPushButton {
+                    background: #ECFDF5; color: #059669;
+                    border: 1px solid #A7F3D0; border-radius: 12px;
+                    text-align: left; padding: 0 10px; font-weight: 600; font-size: 8pt;
+                }
+                QPushButton:hover { background: #D1FAE5; color: #047857; border-color: #6EE7B7; }
+            """)
+        else:
+            self._pill_startup_btn.setText("◈  DEFAULT: FULL WINDOW")
+            self._pill_startup_btn.setStyleSheet("""
+                QPushButton {
+                    background: #F8FAFC; color: #64748B;
+                    border: 1px solid #E2E8F0; border-radius: 12px;
+                    text-align: left; padding: 0 10px; font-weight: 500; font-size: 8pt;
+                }
+                QPushButton:hover { background: #FFFFFF; color: #0F172A; border-color: #CBD5E1; }
+            """)
+
     def _toggle_brief(self):
         from memory.config_manager import get_brief_enabled, save_brief_enabled
         new_val = not get_brief_enabled()
@@ -5718,9 +5762,50 @@ class JarvisUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
+        self._app.setQuitOnLastWindowClosed(False)
         self._win = MainWindow(face_path)
         self.root = _RootShim(self._app)
-        self._win.show()
+
+        # Wire up system power & sleep/wake monitoring
+        try:
+            from core.power_monitor import init_power_monitor
+            self._power_mon = init_power_monitor(self._win)
+            self._power_mon.system_resumed.connect(self._on_laptop_resumed)
+        except Exception as e:
+            print(f"[AUREX Power] Init notice: {e}")
+            self._power_mon = None
+
+        # Determine startup mode: default is PILL mode unless explicitly forced to window
+        from memory.config_manager import get_start_in_pill
+        force_win  = any(arg in sys.argv for arg in ("--full", "--window", "--normal"))
+        force_pill = any(arg in sys.argv for arg in ("--pill", "--shrink", "--mini"))
+        start_in_pill = force_pill or (get_start_in_pill() and not force_win)
+
+        if self._win._ready and start_in_pill:
+            self._win.hide()
+            QTimer.singleShot(60, shrink_app_to_pill)
+        else:
+            self._win.show()
+
+    def _on_laptop_resumed(self, reason: str):
+        from memory.config_manager import get_start_in_pill
+        if get_start_in_pill():
+            self._win._log_sig.emit("SYS: Laptop resumed from sleep — restored to pill mode.")
+        else:
+            self._win._log_sig.emit("SYS: Laptop resumed from sleep.")
+        if hasattr(self, "_on_system_resume_cb") and callable(self._on_system_resume_cb):
+            try:
+                self._on_system_resume_cb()
+            except Exception as e:
+                print(f"[AUREX] on_system_resume callback error: {e}")
+
+    @property
+    def on_system_resume(self):
+        return getattr(self, "_on_system_resume_cb", None)
+
+    @on_system_resume.setter
+    def on_system_resume(self, cb):
+        self._on_system_resume_cb = cb
 
     @property
     def muted(self) -> bool:

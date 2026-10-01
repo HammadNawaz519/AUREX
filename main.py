@@ -582,6 +582,7 @@ class JarvisLive:
         self.ui.on_interrupt      = self.interrupt
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
         self.ui.on_audio_device_change = self._on_audio_device_change
+        self.ui.on_system_resume  = self._on_system_resume   # laptop sleep/wake resume handler
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
 
@@ -809,6 +810,12 @@ class JarvisLive:
         but the conversation is kept, which is the whole reason resumption
         landed before this feature did."""
         self.request_reconnect(keep_context=True, reason="audio device")
+
+    def _on_system_resume(self):
+        """Laptop woke from sleep / suspend. Stale network sockets and audio
+        streams are refreshed cleanly while keeping conversation context."""
+        print("[AUREX] ⚡ Laptop resumed from sleep — refreshing Live connection")
+        self.request_reconnect(keep_context=True, reason="laptop wake")
 
     async def _watch_reconnect(self):
         """Session-scoped task: when a voluntary reconnect is requested, raise a
