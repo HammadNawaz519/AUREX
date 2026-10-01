@@ -142,6 +142,30 @@ def resolve_recipient(recipient_input: str) -> tuple[str, str]:
 
 # ── THEMES & STYLING ──────────────────────────────────────────────────────────
 THEMES = {
+    "atelier_slate": {
+        "name": "Atelier Slate (Refined Editorial Luxury)",
+        "body_bg": "#F4F4F2",
+        "container_bg": "#FFFFFF",
+        "card_bg": "#F4F4F2",
+        "border_color": "#E8E8E8",
+        "border_outer": "#BBBFCA",
+        "accent": "#495464",
+        "accent_glow": "rgba(73, 84, 100, 0.08)",
+        "accent_secondary": "#717D8F",
+        "badge_bg": "#495464",
+        "badge_border": "#495464",
+        "badge_text": "#F4F4F2",
+        "title_color": "#495464",
+        "body_text": "#495464",
+        "muted_text": "#717D8F",
+        "quote_bg": "#F4F4F2",
+        "quote_border": "#495464",
+        "btn_bg": "#495464",
+        "btn_text": "#F4F4F2",
+        "btn_shadow": "none",
+        "sys_badge": "AUREX",
+        "pill_text": "INTELLIGENT ASSISTANT • OFFICIAL DISPATCH",
+    },
     "cyber_aurex": {
         "name": "Cyber Aurex (Neon Cyan)",
         "body_bg": "#070b14",
@@ -356,194 +380,214 @@ def build_html_email(
     to_email: str,
     subject: str,
     body: str,
-    theme_key: str = "cyber_aurex",
+    theme_key: str = "atelier_slate",
     button_text: str | None = None,
     button_url: str | None = None,
     sender_name: str | None = None,
     sender_email: str | None = None,
 ) -> str:
-    """Generates the full modern UI HTML email."""
-    theme = THEMES.get(theme_key, THEMES["cyber_aurex"])
+    """Generates the clean, refined editorial HTML email."""
+    theme = THEMES.get(theme_key, THEMES["atelier_slate"])
     now_str = datetime.now().strftime("%B %d, %Y • %I:%M %p")
     sender_name = sender_name or "Hammad Nawaz"
     sender_email = sender_email or DEFAULT_GMAIL_USER
 
     formatted_body = _markdown_to_html(body, theme)
 
+    raw_preview = re.sub(r"[#*`\[\]()]", "", body).strip()
+    preheader_text = raw_preview[:120] if raw_preview else f"Official dispatch from {sender_name}."
+
     button_html = ""
     if button_text and button_url:
         button_html = f"""
-        <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 28px 0 16px 0;">
-            <tr>
-                <td align="left">
-                    <a href="{button_url}" target="_blank" style="display: inline-block; padding: 14px 32px; background: {theme['btn_bg']}; color: {theme['btn_text']}; text-decoration: none; border-radius: 10px; font-weight: 700; font-size: 14px; letter-spacing: 0.5px; box-shadow: {theme['btn_shadow']}; text-transform: uppercase;">
-                        {button_text} &rarr;
+          <!-- CALL TO ACTION BUTTON -->
+          <tr>
+            <td align="center" style="padding: 10px 28px 24px 28px; text-align: center;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                <tr>
+                  <td align="center" style="background-color: {theme['btn_bg']}; border-radius: 2px;">
+                    <a href="{button_url}" target="_blank" class="cta-btn" style="display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: {theme['btn_text']}; text-decoration: none; padding: 13px 34px; border: 1px solid {theme['btn_bg']}; border-radius: 2px;">
+                      {button_text} &rarr;
                     </a>
-                </td>
-            </tr>
-        </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
         """
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
+    border_outer = theme.get("border_outer", theme["border_color"])
+
+    return f"""<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{subject}</title>
-    <!--[if mso]>
-    <style type="text/css">
-    body, table, td {{font-family: Arial, Helvetica, sans-serif !important;}}
-    </style>
-    <![endif]-->
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
-        body {{
-            margin: 0;
-            padding: 0;
-            background-color: {theme['body_bg']};
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            color: {theme['body_text']};
-        }}
-    </style>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta name="format-detection" content="telephone=no, date=no, address=no, email=no" />
+  <meta name="color-scheme" content="light" />
+  <meta name="supported-color-schemes" content="light" />
+  <title>{subject}</title>
+  <style type="text/css">
+    body, table, td, a {{ -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }}
+    table, td {{ mso-table-lspace: 0pt; mso-table-rspace: 0pt; }}
+    img {{ -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }}
+    body {{
+      margin: 0;
+      padding: 0;
+      width: 100% !important;
+      height: 100% !important;
+      background-color: {theme['body_bg']};
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }}
+    .cta-btn:hover {{
+      background-color: #363E4B !important;
+    }}
+    @media only screen and (max-width: 600px) {{
+      .email-container {{ width: 100% !important; max-width: 100% !important; }}
+      .content-padding {{ padding: 24px 16px !important; }}
+      .mobile-stack {{ display: block !important; width: 100% !important; text-align: left !important; }}
+      .mobile-padding-top {{ padding-top: 10px !important; }}
+    }}
+  </style>
 </head>
-<body style="margin: 0; padding: 30px 10px; background-color: {theme['body_bg']};">
-    <center>
-        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 620px; margin: 0 auto;">
-            
-            <!-- SYSTEM HEADER BADGE -->
-            <tr>
-                <td style="padding-bottom: 14px;">
-                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
-                        <tr>
-                            <td align="left">
-                                <span style="display: inline-block; background-color: {theme['badge_bg']}; border: 1px solid {theme['badge_border']}; color: {theme['badge_text']}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; padding: 5px 12px; border-radius: 20px; text-transform: uppercase;">
-                                    {theme['sys_badge']}
-                                </span>
-                            </td>
-                            <td align="right">
-                                <span style="font-size: 11px; color: {theme['muted_text']}; font-weight: 600; letter-spacing: 0.5px;">
-                                    {theme['pill_text']}
-                                </span>
-                            </td>
-                        </tr>
-                    </table>
-                </td>
-            </tr>
+<body style="margin: 0; padding: 0; background-color: {theme['body_bg']}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: none;">
+  <!-- Anti-Spam Deliverability Preheader -->
+  <div style="display: none; font-size: 1px; color: #666666; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden; mso-hide: all; visibility: hidden;">
+    {preheader_text}
+  </div>
+  <div style="display: none; font-size: 1px; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden; mso-hide: all;">
+    &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+  </div>
 
-            <!-- MAIN CONTAINER CARD -->
-            <tr>
-                <td style="background-color: {theme['container_bg']}; border: 1px solid {theme['border_color']}; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 40px -15px {theme['accent_glow']};">
-                    
-                    <!-- TOP GLOW ACCENT BAR -->
-                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
-                        <tr>
-                            <td height="4" style="background: linear-gradient(90deg, {theme['accent']}, {theme['accent_secondary']}); font-size: 0; line-height: 0;">&nbsp;</td>
-                        </tr>
-                    </table>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: {theme['body_bg']}; padding: 36px 12px;">
+    <tr>
+      <td align="center">
+        <!-- Main Container (max-width 580px) -->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="email-container" style="max-width: 580px; background-color: {theme['container_bg']}; border: 1px solid {border_outer}; border-radius: 2px; overflow: hidden;">
+          
+          <!-- TOP ACCENT BAR -->
+          <tr>
+            <td style="background-color: {theme['accent']}; height: 4px; line-height: 4px; font-size: 1px;">&nbsp;</td>
+          </tr>
 
-                    <!-- CARD PADDING WRAPPER -->
-                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="padding: 32px 32px 28px 32px;">
-                        
-                        <!-- META ROW -->
-                        <tr>
-                            <td style="padding-bottom: 24px;">
-                                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: {theme['card_bg']}; border: 1px solid {theme['border_color']}; border-radius: 12px; padding: 14px 18px;">
-                                    <tr>
-                                        <td>
-                                            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: {theme['muted_text']}; font-weight: 700; margin-bottom: 4px;">
-                                                TRANSMISSION DISPATCH
-                                            </div>
-                                            <div style="font-size: 13px; color: {theme['title_color']};">
-                                                <strong>From:</strong> {sender_name} &lt;<span style="color: {theme['accent']};">{sender_email}</span>&gt;
-                                            </div>
-                                            <div style="font-size: 13px; color: {theme['body_text']}; margin-top: 2px;">
-                                                <strong>To:</strong> {to_name} &lt;<span style="color: {theme['accent']};">{to_email}</span>&gt;
-                                            </div>
-                                        </td>
-                                        <td align="right" valign="top">
-                                            <span style="font-size: 11px; color: {theme['muted_text']}; font-family: monospace;">
-                                                {now_str}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                </table>
-                            </td>
-                        </tr>
+          <!-- HEADER / BRAND BADGE -->
+          <tr>
+            <td align="center" style="padding: 32px 24px 16px 24px; text-align: center; background-color: {theme['container_bg']};">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                <tr>
+                  <td align="center" style="background-color: {theme['badge_bg']}; padding: 9px 30px; border-radius: 2px;">
+                    <span style="font-family: 'Cormorant Garamond', 'Georgia', serif; font-size: 20px; font-weight: 400; letter-spacing: 0.35em; color: {theme['badge_text']}; text-transform: uppercase; margin-left: 0.35em; display: inline-block;">
+                      {theme['sys_badge']}
+                    </span>
+                  </td>
+                </tr>
+              </table>
+              <div style="font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: {theme['muted_text']}; margin-top: 10px;">
+                {theme['pill_text']}
+              </div>
+            </td>
+          </tr>
 
-                        <!-- SUBJECT TITLE -->
-                        <tr>
-                            <td style="padding-bottom: 20px;">
-                                <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: {theme['accent']}; font-weight: 800; margin-bottom: 6px;">
-                                    SUBJECT LINE
-                                </div>
-                                <h1 style="margin: 0; font-family: 'Outfit', 'Inter', sans-serif; font-size: 24px; font-weight: 800; line-height: 1.3; color: {theme['title_color']}; letter-spacing: -0.3px;">
-                                    {subject}
-                                </h1>
-                            </td>
-                        </tr>
+          <!-- HERO BANNER / SUBJECT -->
+          <tr>
+            <td align="center" style="padding: 10px 28px 20px 28px; text-align: center;">
+              <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: {theme['muted_text']}; margin-bottom: 8px;">
+                Direct Communication
+              </div>
+              <h1 style="font-family: 'Cormorant Garamond', 'Georgia', serif; font-size: 24px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: {theme['title_color']}; margin: 0 0 8px 0; line-height: 1.35;">
+                {subject}
+              </h1>
+            </td>
+          </tr>
 
-                        <!-- DIVIDER -->
-                        <tr>
-                            <td style="padding-bottom: 24px;">
-                                <div style="height: 1px; width: 100%; background: linear-gradient(90deg, {theme['border_color']}, {theme['accent_glow']}, {theme['border_color']});"></div>
-                            </td>
-                        </tr>
+          <!-- META CARD -->
+          <tr>
+            <td style="padding: 0 28px 22px 28px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: {theme['card_bg']}; border: 1px solid {theme['border_color']}; padding: 14px 18px; border-radius: 2px;">
+                <tr>
+                  <td class="mobile-stack" style="text-align: left; vertical-align: middle;">
+                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: {theme['muted_text']}; font-weight: 600;">
+                      Correspondence Dispatch
+                    </div>
+                    <div style="font-size: 13px; font-weight: 600; color: {theme['title_color']}; margin-top: 2px;">
+                      From: {sender_name}
+                    </div>
+                    <div style="font-size: 11px; color: {theme['muted_text']}; margin-top: 2px;">
+                      To: {to_name} &bull; {now_str}
+                    </div>
+                  </td>
+                  <td class="mobile-stack mobile-padding-top" style="text-align: right; vertical-align: middle;">
+                    <span style="display: inline-block; background-color: {theme['badge_bg']}; color: {theme['badge_text']}; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; padding: 5px 10px; border-radius: 2px;">
+                      Verified Dispatch
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
 
-                        <!-- EMAIL BODY CONTENT -->
-                        <tr>
-                            <td style="padding-bottom: 12px;">
-                                {formatted_body}
-                                {button_html}
-                            </td>
-                        </tr>
+          <!-- DIVIDER -->
+          <tr>
+            <td style="padding: 0 28px;">
+              <div style="border-top: 1px solid {theme['border_color']}; font-size: 1px; line-height: 1px; margin-bottom: 22px;">&nbsp;</div>
+            </td>
+          </tr>
 
-                        <!-- SIGN-OFF GREETING -->
-                        <tr>
-                            <td style="padding-top: 16px; border-top: 1px solid {theme['border_color']};">
-                                <p style="margin: 0; font-size: 14px; color: {theme['body_text']};">
-                                    Best regards,<br>
-                                    <strong style="color: {theme['title_color']}; font-size: 15px;">{sender_name}</strong>
-                                </p>
-                            </td>
-                        </tr>
+          <!-- BODY CONTENT -->
+          <tr>
+            <td style="padding: 0 28px 20px 28px; font-size: 14px; line-height: 1.75; color: {theme['body_text']};">
+              {formatted_body}
+            </td>
+          </tr>
 
-                    </table>
+          {button_html}
 
-                    <!-- FOOTER SECURITY / BRANDING -->
-                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: {theme['card_bg']}; border-top: 1px solid {theme['border_color']}; padding: 20px 32px;">
-                        <tr>
-                            <td align="left">
-                                <div style="font-size: 11px; color: {theme['muted_text']}; font-weight: 600; line-height: 1.5;">
-                                    Generated & Dispatched autonomously via <strong style="color: {theme['accent']};">AUREX Intelligence Core</strong>.
-                                </div>
-                                <div style="font-size: 10px; color: {theme['muted_text']}; margin-top: 2px;">
-                                    🔒 256-Bit SSL/TLS Encrypted Transmission • Authenticated Google SMTP Relay
-                                </div>
-                            </td>
-                            <td align="right" valign="middle">
-                                <span style="font-size: 18px; filter: drop-shadow(0 0 8px {theme['accent']});">⚡</span>
-                            </td>
-                        </tr>
-                    </table>
+          <!-- SIGN-OFF -->
+          <tr>
+            <td style="padding: 10px 28px 28px 28px;">
+              <div style="font-size: 12px; color: {theme['muted_text']}; margin-bottom: 4px;">Warm regards,</div>
+              <div style="font-family: 'Cormorant Garamond', 'Georgia', serif; font-size: 18px; font-weight: 600; color: {theme['title_color']};">
+                {sender_name}
+              </div>
+              <div style="font-size: 11px; color: {theme['muted_text']}; margin-top: 2px;">
+                via AUREX Assistant
+              </div>
+            </td>
+          </tr>
 
-                </td>
-            </tr>
+          <!-- DIVIDER -->
+          <tr>
+            <td style="padding: 0 28px;">
+              <div style="border-top: 1px solid {theme['border_color']}; font-size: 1px; line-height: 1px;">&nbsp;</div>
+            </td>
+          </tr>
 
-            <!-- FOOTER NOTICE -->
-            <tr>
-                <td align="center" style="padding-top: 20px;">
-                    <p style="margin: 0; font-size: 11px; color: {theme['muted_text']}; line-height: 1.5;">
-                        This email was sent on behalf of Hammad Nawaz using AUREX AI Desktop Assistant.<br>
-                        Recipient: <span style="color: {theme['accent']};">{to_email}</span> • Time: {now_str}
-                    </p>
-                </td>
-            </tr>
+          <!-- BRAND EDITORIAL FOOTER -->
+          <tr>
+            <td align="center" style="padding: 24px 28px; text-align: center; background-color: {theme['card_bg']};">
+              <p style="font-family: 'Cormorant Garamond', 'Georgia', serif; font-size: 14px; font-weight: 500; letter-spacing: 0.28em; text-transform: uppercase; color: {theme['title_color']}; margin: 0 0 6px 0;">
+                {theme['sys_badge']}
+              </p>
+              <p style="font-size: 10px; line-height: 1.5; letter-spacing: 0.08em; text-transform: uppercase; color: {theme['muted_text']}; margin: 0 0 10px 0;">
+                Autonomous Intelligent Assistant &bull; Direct Correspondence
+              </p>
+              <p style="font-size: 10px; color: {theme.get('border_outer', '#BBBFCA')}; letter-spacing: 0.05em; margin: 0;">
+                Transmitted via authenticated Google SMTP relay to <a href="mailto:{to_email}" style="color: {theme['title_color']}; text-decoration: underline;">{to_email}</a>
+              </p>
+              <p style="font-size: 10px; color: {theme.get('border_outer', '#BBBFCA')}; margin: 8px 0 0 0;">
+                &copy; 2026 AUREX. All rights reserved.
+              </p>
+            </td>
+          </tr>
 
         </table>
-    </center>
+      </td>
+    </tr>
+  </table>
 </body>
-</html>
-"""
+</html>"""
 
 
 def _log_player(msg: str, player=None):
@@ -562,7 +606,7 @@ def send_email(
     to: str,
     subject: str,
     body: str,
-    theme: str = "cyber_aurex",
+    theme: str = "atelier_slate",
     button_text: str | None = None,
     button_url: str | None = None,
     player=None,
@@ -643,11 +687,11 @@ def send_email(
 PLUGIN = {
     "name": "gmail",
     "description": (
-        "Sends an email via Gmail using a beautiful, modern UI-styled HTML template. "
+        "Sends an email via Gmail using a refined, clean luxury editorial HTML UI template. "
         "Use this tool whenever the user asks to send an email, mail someone, send a message through Gmail, "
         "compose an email, or notify someone via email. "
         "Supports recipient email or contact names, custom subjects, markdown-styled body, "
-        "and UI themes ('cyber_aurex', 'executive_modern', 'aurora_purple', 'clean_light')."
+        "and UI themes ('atelier_slate' default luxury editorial, 'cyber_aurex', 'executive_modern', 'clean_light')."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -666,7 +710,7 @@ PLUGIN = {
             },
             "theme": {
                 "type": "STRING",
-                "description": "Optional UI theme: 'cyber_aurex' (default dark neon), 'executive_modern', 'aurora_purple', or 'clean_light'"
+                "description": "Optional UI theme: 'atelier_slate' (default elegant editorial luxury), 'cyber_aurex', 'executive_modern', or 'clean_light'"
             },
             "button_text": {
                 "type": "STRING",
@@ -718,7 +762,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     to = params.get("to", "").strip()
     subject = params.get("subject", "").strip()
     body = params.get("body", "").strip()
-    theme = params.get("theme", "cyber_aurex").strip().lower()
+    theme = params.get("theme", "atelier_slate").strip().lower()
     button_text = params.get("button_text")
     button_url = params.get("button_url")
 
@@ -732,7 +776,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         subject = "Message from Hammad Nawaz"
 
     if theme not in THEMES:
-        theme = "cyber_aurex"
+        theme = "atelier_slate"
 
     ok, msg = send_email(
         to=to,
