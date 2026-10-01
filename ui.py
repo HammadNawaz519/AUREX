@@ -228,11 +228,18 @@ def _nvml_gpu_windows() -> float:
                     continue
 
         if _nvml_lib is None:
-            import pynvml  # type: ignore
-            pynvml.nvmlInit()
-            h = pynvml.nvmlDeviceGetHandleByIndex(0)
-            _nvml_ok = True
-            return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
+            try:
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=FutureWarning)
+                    import pynvml  # type: ignore
+                pynvml.nvmlInit()
+                h = pynvml.nvmlDeviceGetHandleByIndex(0)
+                _nvml_ok = True
+                return float(pynvml.nvmlDeviceGetUtilizationRates(h).gpu)
+            except Exception:
+                _nvml_ok = False
+                return -1.0
 
         dev = ctypes.c_void_p()
         _nvml_lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
@@ -312,13 +319,18 @@ class _SysMetrics:
             self.tmp = tmp
 
     def _get_gpu(self) -> float:
-        # pynvml — subprocess-free; initialise once and reuse the handle.
-        # Re-initialising NVML on every poll is slow, so cache it and stop
-        # retrying pynvml entirely once it proves unavailable here.
+        # Windows: direct nvml.dll via ctypes (fast and subprocess-free)
+        if _OS == "Windows":
+            return _nvml_gpu_windows()
+
+        # Linux / other: pynvml fallback
         if self._pynvml_ok is not False:
             try:
                 if self._pynvml_h is None:
-                    import pynvml  # type: ignore
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=FutureWarning)
+                        import pynvml  # type: ignore
                     pynvml.nvmlInit()
                     self._pynvml    = pynvml
                     self._pynvml_h  = pynvml.nvmlDeviceGetHandleByIndex(0)
@@ -326,10 +338,6 @@ class _SysMetrics:
                 return float(self._pynvml.nvmlDeviceGetUtilizationRates(self._pynvml_h).gpu)
             except Exception:
                 self._pynvml_ok = False
-
-        # Windows: nvml.dll via ctypes (already cached in _nvml_gpu_windows)
-        if _OS == "Windows":
-            return _nvml_gpu_windows()
 
         # Linux / macOS: libnvidia-ml shared lib via ctypes — init once, reuse
         try:
@@ -5687,6 +5695,11 @@ class MainWindow(QMainWindow):
     def _apply_state(self, state: str):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
+        try:
+            from plugins.shrink import set_pill_state
+            set_pill_state(state)
+        except Exception:
+            pass
 
     def _check_config(self) -> bool:
         from memory.config_manager import get_gemini_key

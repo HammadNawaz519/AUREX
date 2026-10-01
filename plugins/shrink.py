@@ -45,6 +45,7 @@ class ShrinkPillWindow(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("AUREX Pill Mode\n• Click or Double-click to restore\n• Drag to reposition")
 
+        self._state: str = "SLEEPING"
         self._phase: float = 0.0
         self._restoring: bool = False
         self._timer: QTimer = QTimer(self)
@@ -52,6 +53,15 @@ class ShrinkPillWindow(QWidget):
         self._timer.timeout.connect(self._on_tick)
 
         self._position_bottom_right()
+
+    def set_state(self, state: str):
+        """Update active state. Ripples only animate when listening or speaking."""
+        self._state = (state or "").upper()
+        if self._state in ("LISTENING", "SPEAKING"):
+            self.start_wave()
+        else:
+            self.stop_wave()
+        self.update()
 
     def _position_bottom_right(self):
         """Stick to the desktop bottom-right corner with a sleek margin."""
@@ -152,8 +162,13 @@ class ShrinkPillWindow(QWidget):
         cy = h / 2.0
         center = QPointF(cx, cy)
         max_r = min(w, h) / 2.0 - 5.0
+
+        # Ripple waves fade completely into the disc before reaching the word "AUREX"
+        # The word AUREX sits at y = h - 23 (101px), which is 39px from center.
+        # Setting max_ripple_r to 35px ensures waves fade out 4px clear above the text.
+        max_ripple_r = (h - 23.0) - cy - 4.0
         min_r = 6.0
-        wave_span = max_r - min_r
+        wave_span = max_ripple_r - min_r
 
         # ── 1. Deep Jet-Black Circular Disc ──────────────────────────────────
         bg_grad = QRadialGradient(center, max_r)
@@ -163,38 +178,42 @@ class ShrinkPillWindow(QWidget):
         painter.setBrush(QBrush(bg_grad))
 
         # Breathing outer border rim with warm beige/gold tone
-        border_alpha = int(60 + 35 * math.sin(self._phase * 2.0 * math.pi))
+        is_active = self._state in ("LISTENING", "SPEAKING")
+        border_alpha = int(60 + 35 * math.sin(self._phase * 2.0 * math.pi)) if is_active else 45
         border_pen = QPen(QColor(212, 196, 168, border_alpha), 1.5)
         painter.setPen(border_pen)
         painter.drawEllipse(center, max_r, max_r)
 
         # ── 2. Concentric Waves Radiating from Center to Outwards ────────────
-        num_waves = 5
-        for i in range(num_waves):
-            # Staggered phase offset for each wave ring
-            prog = (self._phase + (i / float(num_waves))) % 1.0
+        # Ripples ONLY appear and animate when listening or speaking, and fade out
+        # completely before reaching the word "AUREX"
+        if is_active:
+            num_waves = 4
+            for i in range(num_waves):
+                # Staggered phase offset for each wave ring
+                prog = (self._phase + (i / float(num_waves))) % 1.0
 
-            # Radius expands from min_r (center) to max_r (perimeter)
-            r = min_r + (prog ** 0.82) * wave_span
+                # Radius expands from min_r (center) up to max_ripple_r
+                r = min_r + (prog ** 0.85) * wave_span
 
-            # Opacity fades naturally as wave expands outwards
-            fade = 1.0 - prog
-            alpha = int(225 * (fade ** 1.35))
+                # Opacity fades naturally and dissolves to 0 before hitting the text
+                fade = max(0.0, 1.0 - prog)
+                alpha = int(220 * (fade ** 1.4))
 
-            if alpha > 3:
-                # Soft diffuse outer glow for each wave ring
-                glow_pen = QPen(QColor(212, 196, 168, int(alpha * 0.35)), 3.8)
-                painter.setPen(glow_pen)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawEllipse(center, r, r)
+                if alpha > 3:
+                    # Soft diffuse outer glow for each wave ring
+                    glow_pen = QPen(QColor(212, 196, 168, int(alpha * 0.35)), 3.2)
+                    painter.setPen(glow_pen)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawEllipse(center, r, r)
 
-                # Sharp luminous wave line
-                wave_pen = QPen(QColor(235, 222, 200, alpha), 1.6)
-                painter.setPen(wave_pen)
-                painter.drawEllipse(center, r, r)
+                    # Sharp luminous cream wave line
+                    wave_pen = QPen(QColor(235, 222, 200, alpha), 1.5)
+                    painter.setPen(wave_pen)
+                    painter.drawEllipse(center, r, r)
 
         # ── 3. Pulsing Central Energy Nexus ──────────────────────────────────
-        pulse = 0.5 + 0.5 * math.sin(self._phase * 4.0 * math.pi)
+        pulse = (0.5 + 0.5 * math.sin(self._phase * 4.0 * math.pi)) if is_active else 0.2
         core_r = min_r + pulse * 2.5
 
         core_grad = QRadialGradient(center, core_r + 6)
@@ -222,11 +241,13 @@ class ShrinkPillWindow(QWidget):
 class _ShrinkBridge(QObject):
     shrink_sig = pyqtSignal()
     restore_sig = pyqtSignal()
+    state_sig = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self.shrink_sig.connect(_do_shrink)
         self.restore_sig.connect(_do_restore)
+        self.state_sig.connect(_do_set_state)
 
 
 _bridge: Optional[_ShrinkBridge] = None
@@ -243,6 +264,21 @@ def _get_bridge() -> _ShrinkBridge:
             except Exception:
                 pass
     return _bridge
+
+
+def _do_set_state(state: str):
+    global _pill_window
+    if _pill_window is not None:
+        _pill_window.set_state(state)
+
+
+def set_pill_state(state: str) -> bool:
+    """Thread-safe update of the pill bubble state (LISTENING, SPEAKING, SLEEPING)."""
+    app = QApplication.instance()
+    if not app:
+        return False
+    _get_bridge().state_sig.emit(state)
+    return True
 
 
 def _find_main_window() -> Optional[QWidget]:
@@ -295,10 +331,13 @@ def _do_shrink():
             _pill_window = ShrinkPillWindow()
 
         _pill_window._restoring = False
+        cur_st = "SLEEPING"
+        if main_win is not None and hasattr(main_win, "hud") and hasattr(main_win.hud, "state"):
+            cur_st = getattr(main_win.hud, "state", "SLEEPING")
+        _pill_window.set_state(cur_st)
         _pill_window.show()
         _pill_window.raise_()
         _pill_window.activateWindow()
-        _pill_window.start_wave()
     finally:
         _is_transitioning = False
 

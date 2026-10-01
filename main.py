@@ -1710,6 +1710,21 @@ class JarvisLive:
             stream.stop()
             stream.close()
 
+    async def _send_startup_greeting(self) -> None:
+        """Brief spoken confirmation upon launch so user knows audio & connection are active."""
+        try:
+            await asyncio.sleep(0.4)
+            if not self.session:
+                return
+            from memory.config_manager import get_user_name
+            user = get_user_name() or "sir"
+            await self.session.send(
+                input=f"Say a quick, natural one-sentence greeting to {user} stating that AUREX is online and ready.",
+                end_of_turn=True,
+            )
+        except Exception as e:
+            print(f"[AUREX] Startup greeting notice: {e}")
+
     # ── Morning briefing ────────────────────────────────────────────────────────
 
     async def _send_startup_briefing(self) -> None:
@@ -2138,12 +2153,15 @@ class JarvisLive:
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
 
-                    # Morning briefing — fires once per process launch (if enabled).
-                    # Skipped in wake-word mode: it comes up asleep, and a briefing
+                    # Morning briefing or voice greeting — fires once per process launch.
+                    # Skipped in wake-word mode: it comes up asleep, and a greeting
                     # would mean talking while "asleep".
-                    if not self._briefing_sent and get_brief_enabled() and self._awake:
+                    if not self._briefing_sent and self._awake:
                         self._briefing_sent = True
-                        tg.create_task(self._send_startup_briefing())
+                        if get_brief_enabled():
+                            tg.create_task(self._send_startup_briefing())
+                        else:
+                            tg.create_task(self._send_startup_greeting())
 
             except KeyboardInterrupt:
                 raise
@@ -2211,11 +2229,14 @@ class JarvisLive:
                     or "proactiv" in err_str.lower()
                     or "Unknown name" in err_str
                     or "unexpected keyword" in err_str
+                    or "1011" in err_str
+                    or "internal error" in err_str.lower()
                 ):
                     self._enhanced_live = False
                     self.ui.write_log(
-                        "SYS: Proactive audio unavailable — reconnecting without it."
+                        "SYS: Live connection adjusted — reconnecting on stable configuration."
                     )
+                    self._conn_backoff = 1
                     continue
 
                 # Invalid API key — stop hammering the API, prompt re-configuration
