@@ -15,6 +15,7 @@ import json
 import re
 import ssl
 import smtplib
+import threading
 from pathlib import Path
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -44,6 +45,10 @@ DEFAULT_GMAIL_APP_PASSWORD = "rpyu qgwy pbed bldh"
 DEFAULT_SENDER_NAME = "Hammad Nawaz (via AUREX)"
 
 CONFIG_DIR = _ROOT / "config"
+MEMORY_DIR = _ROOT / "memory"
+SENT_EMAILS_PATH = MEMORY_DIR / "sent_emails.json"
+_SENT_LOCK = threading.Lock()
+
 CONTACTS_PATH = CONFIG_DIR / "contacts.json"
 API_KEYS_PATH = CONFIG_DIR / "api_keys.json"
 ENV_PATH = _ROOT / ".env"
@@ -474,7 +479,7 @@ def build_html_email(
 
           <!-- HEADER / BRAND BADGE -->
           <tr>
-            <td align="center" style="padding: 32px 24px 16px 24px; text-align: center; background-color: {theme['container_bg']};">
+            <td align="center" style="padding: 32px 24px 18px 24px; text-align: center; background-color: {theme['container_bg']};">
               <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
                 <tr>
                   <td align="center" style="background-color: {theme['badge_bg']}; padding: 9px 30px; border-radius: 2px;">
@@ -484,18 +489,12 @@ def build_html_email(
                   </td>
                 </tr>
               </table>
-              <div style="font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: {theme['muted_text']}; margin-top: 10px;">
-                {theme['pill_text']}
-              </div>
             </td>
           </tr>
 
           <!-- HERO BANNER / SUBJECT -->
           <tr>
             <td align="center" style="padding: 10px 28px 20px 28px; text-align: center;">
-              <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: {theme['muted_text']}; margin-bottom: 8px;">
-                Direct Communication
-              </div>
               <h1 style="font-family: 'Cormorant Garamond', 'Georgia', serif; font-size: 24px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: {theme['title_color']}; margin: 0 0 8px 0; line-height: 1.35;">
                 {subject}
               </h1>
@@ -505,23 +504,13 @@ def build_html_email(
           <!-- META CARD -->
           <tr>
             <td style="padding: 0 28px 22px 28px;">
-              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: {theme['card_bg']}; border: 1px solid {theme['border_color']}; padding: 14px 18px; border-radius: 2px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: {theme['card_bg']}; border: 1px solid {theme['border_color']}; padding: 12px 18px; border-radius: 2px;">
                 <tr>
-                  <td class="mobile-stack" style="text-align: left; vertical-align: middle;">
-                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: {theme['muted_text']}; font-weight: 600;">
-                      Correspondence Dispatch
-                    </div>
-                    <div style="font-size: 13px; font-weight: 600; color: {theme['title_color']}; margin-top: 2px;">
-                      From: {sender_name}
-                    </div>
-                    <div style="font-size: 11px; color: {theme['muted_text']}; margin-top: 2px;">
-                      To: {to_name} &bull; {now_str}
-                    </div>
+                  <td style="text-align: left; vertical-align: middle;">
+                    <span style="font-size: 12px; font-weight: 600; color: {theme['title_color']}; letter-spacing: 0.03em;">From: {sender_name}</span>
                   </td>
-                  <td class="mobile-stack mobile-padding-top" style="text-align: right; vertical-align: middle;">
-                    <span style="display: inline-block; background-color: {theme['badge_bg']}; color: {theme['badge_text']}; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.14em; padding: 5px 10px; border-radius: 2px;">
-                      Verified Dispatch
-                    </span>
+                  <td style="text-align: right; vertical-align: middle;">
+                    <span style="font-size: 11px; color: {theme['muted_text']}; letter-spacing: 0.03em;">{now_str}</span>
                   </td>
                 </tr>
               </table>
@@ -551,9 +540,6 @@ def build_html_email(
               <div style="font-family: 'Cormorant Garamond', 'Georgia', serif; font-size: 18px; font-weight: 600; color: {theme['title_color']};">
                 {sender_name}
               </div>
-              <div style="font-size: 11px; color: {theme['muted_text']}; margin-top: 2px;">
-                via AUREX Assistant
-              </div>
             </td>
           </tr>
 
@@ -564,19 +550,10 @@ def build_html_email(
             </td>
           </tr>
 
-          <!-- BRAND EDITORIAL FOOTER -->
+          <!-- FOOTER -->
           <tr>
-            <td align="center" style="padding: 24px 28px; text-align: center; background-color: {theme['card_bg']};">
-              <p style="font-family: 'Cormorant Garamond', 'Georgia', serif; font-size: 14px; font-weight: 500; letter-spacing: 0.28em; text-transform: uppercase; color: {theme['title_color']}; margin: 0 0 6px 0;">
-                {theme['sys_badge']}
-              </p>
-              <p style="font-size: 10px; line-height: 1.5; letter-spacing: 0.08em; text-transform: uppercase; color: {theme['muted_text']}; margin: 0 0 10px 0;">
-                Autonomous Intelligent Assistant &bull; Direct Correspondence
-              </p>
+            <td align="center" style="padding: 20px 28px; text-align: center; background-color: {theme['card_bg']};">
               <p style="font-size: 10px; color: {theme.get('border_outer', '#BBBFCA')}; letter-spacing: 0.05em; margin: 0;">
-                Transmitted via authenticated Google SMTP relay to <a href="mailto:{to_email}" style="color: {theme['title_color']}; text-decoration: underline;">{to_email}</a>
-              </p>
-              <p style="font-size: 10px; color: {theme.get('border_outer', '#BBBFCA')}; margin: 8px 0 0 0;">
                 &copy; 2026 AUREX. All rights reserved.
               </p>
             </td>
@@ -655,6 +632,17 @@ def send_email(
 
         _log_player(f"✅ Email successfully delivered to {to_name} ({to_email})!", player)
 
+        # Automatically remember/record sent email (sent_emails.json + cognitive memory)
+        _record_sent_email(
+            to_name=to_name,
+            to_email=to_email,
+            subject=subject,
+            body=body,
+            theme=theme,
+            sender_name=sender_name,
+            msg_id=msg["Message-ID"]
+        )
+
         if player and hasattr(player, "show_content"):
             try:
                 preview = (
@@ -682,31 +670,139 @@ def send_email(
         return False, err
 
 
+# ── SENT EMAIL MEMORY & HISTORY ───────────────────────────────────────────────
+
+def _record_sent_email(
+    to_name: str,
+    to_email: str,
+    subject: str,
+    body: str,
+    theme: str,
+    sender_name: str,
+    msg_id: str | None = None
+) -> None:
+    """
+    Saves a persistent structured record of every sent email into memory/sent_emails.json,
+    and simultaneously updates AUREX long-term cognitive memory so the assistant remembers
+    whom it emailed, when, and what was said during future voice conversations.
+    """
+    now = datetime.now()
+    entry = {
+        "id": str(msg_id or make_msgid(domain="aurex.local")),
+        "timestamp": now.isoformat(),
+        "date_str": now.strftime("%B %d, %Y at %I:%M %p"),
+        "to_name": to_name,
+        "to_email": to_email,
+        "subject": subject,
+        "body": body,
+        "theme": theme,
+        "sender": sender_name,
+    }
+
+    # 1. Persistent dedicated JSON store in memory/sent_emails.json
+    try:
+        SENT_EMAILS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _SENT_LOCK:
+            history = []
+            if SENT_EMAILS_PATH.exists():
+                try:
+                    data = json.loads(SENT_EMAILS_PATH.read_text(encoding="utf-8"))
+                    if isinstance(data, list):
+                        history = data
+                except Exception:
+                    history = []
+            history.append(entry)
+            if len(history) > 500:
+                history = history[-500:]
+            SENT_EMAILS_PATH.write_text(
+                json.dumps(history, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+            print(f"[Gmail History] 💾 Recorded sent email to {to_name} ({to_email}) in {SENT_EMAILS_PATH.name}")
+    except Exception as e:
+        print(f"[Gmail History] ⚠️ Failed saving to {SENT_EMAILS_PATH}: {e}")
+
+    # 2. Cognitive long-term memory update (queried by recall_memory across all sessions)
+    try:
+        from memory.memory_manager import update_memory
+        clean_name = re.sub(r"[^a-zA-Z0-9_]", "_", to_name or to_email).strip("_").lower()[:20]
+        time_tag = now.strftime("%Y%m%d_%H%M%S")
+        snippet = (body[:150] + "…") if len(body) > 150 else body
+        summary_val = (
+            f"Sent email to {to_name} ({to_email}) on {now.strftime('%B %d, %Y at %I:%M %p')} "
+            f"with subject '{subject}'. Content: {snippet}"
+        )
+        update_memory({
+            "notes": {
+                f"sent_email_{clean_name}_{time_tag}": {
+                    "value": summary_val
+                }
+            }
+        })
+        print(f"[Gmail Memory] 🧠 Synced sent email note into AUREX cognitive memory.")
+    except Exception as e:
+        print(f"[Gmail Memory] ⚠️ Failed syncing to long_term.json: {e}")
+
+
+def get_sent_emails(query: str = "", limit: int = 5) -> list[dict]:
+    """Retrieve sent email records from memory/sent_emails.json, newest first."""
+    if not SENT_EMAILS_PATH.exists():
+        return []
+    with _SENT_LOCK:
+        try:
+            data = json.loads(SENT_EMAILS_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                return []
+        except Exception:
+            return []
+
+    q = (query or "").strip().lower()
+    if q:
+        filtered = [
+            e for e in data
+            if q in str(e.get("to_name", "")).lower()
+            or q in str(e.get("to_email", "")).lower()
+            or q in str(e.get("subject", "")).lower()
+            or q in str(e.get("body", "")).lower()
+        ]
+    else:
+        filtered = data
+
+    return list(reversed(filtered))[:limit]
+
+
 # ── PLUGIN REGISTRATION & ENTRYPOINT ─────────────────────────────────────────
 
 PLUGIN = {
     "name": "gmail",
     "description": (
-        "Sends an email via Gmail using a refined, clean luxury editorial HTML UI template. "
-        "Use this tool whenever the user asks to send an email, mail someone, send a message through Gmail, "
-        "compose an email, or notify someone via email. "
-        "Supports recipient email or contact names, custom subjects, markdown-styled body, "
-        "and UI themes ('atelier_slate' default luxury editorial, 'cyber_aurex', 'executive_modern', 'clean_light')."
+        "Sends an email via Gmail using a refined luxury editorial HTML UI template, "
+        "and automatically remembers all sent emails in memory/sent_emails.json (whom, when, subject, and content). "
+        "Can also retrieve or list sent emails when user asks what emails were sent or checks sent history. "
+        "Use this tool whenever the user asks to send an email, mail someone, check sent emails, or see who was emailed."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
+            "action": {
+                "type": "STRING",
+                "description": "Action to perform: 'send' (default) to send a new email, or 'history' / 'list' to check previously sent emails."
+            },
             "to": {
                 "type": "STRING",
                 "description": "Recipient email address (e.g. 'john@example.com') or contact name (e.g. 'Dad', 'Hammad')"
             },
             "subject": {
                 "type": "STRING",
-                "description": "The subject line of the email"
+                "description": "The subject line of the email (for send action)"
             },
             "body": {
                 "type": "STRING",
-                "description": "Content of the email message. Supports markdown (bullet points, bold text, quotes, code)."
+                "description": "Content of the email message (for send action). Supports markdown."
+            },
+            "query": {
+                "type": "STRING",
+                "description": "Optional search filter (e.g. recipient name, subject keyword) when checking sent email history"
             },
             "theme": {
                 "type": "STRING",
@@ -721,7 +817,7 @@ PLUGIN = {
                 "description": "Optional URL link for the call-to-action button"
             }
         },
-        "required": ["to", "subject", "body"]
+        "required": []
     }
 }
 
@@ -759,12 +855,37 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     Entrypoint called by AUREX Plugin Loader / Gemini Live.
     """
     params = parameters or {}
+    action = str(params.get("action", "send")).strip().lower()
     to = params.get("to", "").strip()
     subject = params.get("subject", "").strip()
     body = params.get("body", "").strip()
+    query = str(params.get("query", "")).strip()
     theme = params.get("theme", "atelier_slate").strip().lower()
     button_text = params.get("button_text")
     button_url = params.get("button_url")
+
+    # History / Lookup check: if user asked about previous emails sent
+    is_history_query = any(k in action for k in ("history", "list", "sent", "check", "log", "find", "search", "recent")) or (not body and (to or query) and not subject)
+    if is_history_query:
+        q = query or to
+        records = get_sent_emails(query=q, limit=5)
+        if not records:
+            if q:
+                return f"Sir, I checked the sent email records and found no sent emails matching '{q}'."
+            return "Sir, I checked the records and no emails have been recorded as sent yet."
+
+        lines = [f"Sir, here are the recent sent email records:"]
+        for i, rec in enumerate(records, 1):
+            lines.append(
+                f"{i}. To: {rec.get('to_name')} <{rec.get('to_email')}>\n"
+                f"   When: {rec.get('date_str')}\n"
+                f"   Subject: '{rec.get('subject')}'\n"
+                f"   Content: {str(rec.get('body', ''))[:120]}..."
+            )
+        res_text = "\n".join(lines)
+        if player and hasattr(player, "show_content"):
+            player.show_content("SENT EMAIL HISTORY", res_text)
+        return res_text
 
     if not to:
         return "Sir, please specify who you would like me to send the email to."
@@ -789,6 +910,6 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     )
 
     if ok:
-        return f"Sir, I have dispatched your email to {to} with the subject '{subject}'. It has been delivered successfully."
+        return f"Sir, I have dispatched your email to {to} with the subject '{subject}'. It has been delivered and saved to your sent records."
     else:
         return f"Sir, I encountered an issue sending the email to {to}: {msg}"

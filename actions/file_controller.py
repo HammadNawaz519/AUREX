@@ -30,19 +30,111 @@ from core.undo import push_undo
 
 _OS = platform.system()
 
-# Stateful directory tracking & history for conversational navigation
-_CURRENT_DIR: Path = Path.home() / "Desktop"
+# Undo keeps a file's previous contents in memory so `write` can be reversed.
+_UNDO_CONTENT_LIMIT = 1_000_000
+
+
+# ── REAL WINDOWS FOLDER LOCATIONS (handles OneDrive-redirected folders) ──────
+
+def _win_known_folder(guid_str: str):
+    """Ask Windows where a special folder REALLY is (Desktop may live in OneDrive)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                        ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+        g = GUID()
+        ctypes.windll.ole32.CLSIDFromString(guid_str, ctypes.byref(g))
+        ptr = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(
+                ctypes.byref(g), 0, None, ctypes.byref(ptr)) == 0:
+            p = Path(ptr.value)
+            ctypes.windll.ole32.CoTaskMemFree(ptr)
+            return p
+    except Exception:
+        pass
+    return None
+
+
+_KF_DESKTOP   = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
+_KF_DOWNLOADS = "{374DE290-123F-4565-9164-39C4925E467B}"
+_KF_DOCUMENTS = "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}"
+_KF_PICTURES  = "{33E28130-4E1E-4676-835A-98395C3BC3BB}"
+_KF_MUSIC     = "{4BD8D571-6D19-48D3-BE97-422220080E43}"
+_KF_VIDEOS    = "{18989B1D-99B5-455B-841C-AB7C74E4DDFC}"
+
+
+def _known_dir(guid: str, xdg_var: str, fallback_name: str) -> Path:
+    if _OS == "Windows":
+        p = _win_known_folder(guid)
+        if p:
+            return p
+    if _OS == "Linux":
+        xdg = os.environ.get(xdg_var, "")
+        if xdg and Path(xdg).exists():
+            return Path(xdg)
+    return Path.home() / fallback_name
+
+
+def _get_desktop() -> Path:
+    return _known_dir(_KF_DESKTOP, "XDG_DESKTOP_DIR", "Desktop")
+
+
+def _get_downloads() -> Path:
+    return _known_dir(_KF_DOWNLOADS, "XDG_DOWNLOAD_DIR", "Downloads")
+
+
+def _get_documents() -> Path:
+    return _known_dir(_KF_DOCUMENTS, "XDG_DOCUMENTS_DIR", "Documents")
+
+
+def _get_pictures() -> Path:
+    return _known_dir(_KF_PICTURES, "XDG_PICTURES_DIR", "Pictures")
+
+
+def _get_music() -> Path:
+    return _known_dir(_KF_MUSIC, "XDG_MUSIC_DIR", "Music")
+
+
+def _get_videos() -> Path:
+    return _known_dir(_KF_VIDEOS, "XDG_VIDEOS_DIR", "Videos")
+
+
+def _get_temp() -> Path:
+    return Path(tempfile.gettempdir())
+
+
+def _get_appdata() -> Path:
+    app_data = os.environ.get("APPDATA")
+    return Path(app_data) if app_data else Path.home()
+
+
+def _get_onedrive() -> Path | None:
+    one_drive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
+    if one_drive and Path(one_drive).exists():
+        return Path(one_drive)
+    p = Path.home() / "OneDrive"
+    return p if p.exists() else None
+
+
+# ── Stateful directory tracking & history ────────────────────────────────────
+_CURRENT_DIR: Path = _get_desktop()
 _DIR_HISTORY_BACK: list[Path] = []
 _DIR_HISTORY_FORWARD: list[Path] = []
 
+
 def get_current_dir() -> Path:
-    global _CURRENT_DIR
     return _CURRENT_DIR
+
 
 def set_current_dir(p: Path):
     global _CURRENT_DIR
     _push_navigation(p)
     _CURRENT_DIR = p
+
 
 def _push_navigation(new_dir: Path):
     global _CURRENT_DIR, _DIR_HISTORY_BACK, _DIR_HISTORY_FORWARD
@@ -56,9 +148,13 @@ def _push_navigation(new_dir: Path):
     except Exception:
         pass
 
-# Undo keeps a file's previous contents in memory so `write` can be reversed.
-_UNDO_CONTENT_LIMIT = 1_000_000
 
+def _need(msg: str) -> str:
+    """Signal to the AI model that it must ask the user, not guess."""
+    return f"NEED_INFO: {msg} Ask the user this question and wait for the answer. Do NOT guess."
+
+
+# ── Undo helpers ─────────────────────────────────────────────────────────────
 
 def _undo_move(src: Path, dst: Path):
     """Reverse of a move: put it back where it came from."""
@@ -122,18 +218,15 @@ def _restore_from_trash(original: Path) -> str:
 
 def _is_safe_path(target: Path) -> bool:
     """Validate path permissions:
-    - ALLOWED: D: drive (full access), all secondary drives (E:, F:), user folders on C: (Desktop, Documents, Downloads, Pictures, Videos, Music, user home)
-    - PROTECTED/BLOCKED: Sensitive Windows OS root folders on C: (Windows, Program Files, System32)
+    - ALLOWED: all non-C: drives, user folders on C:
+    - BLOCKED: Windows OS folders on C: (Windows, Program Files)
     """
     try:
         resolved = target.resolve()
         if _OS == "Windows":
             drive = resolved.drive.upper()
             if drive and drive != "C:":
-                # D: drive and all other drives are 100% fully accessible
                 return True
-
-            # For C: drive, protect critical Windows system folders
             sys_roots = [
                 Path("C:/Windows").resolve(),
                 Path("C:/Program Files").resolve(),
@@ -142,84 +235,26 @@ def _is_safe_path(target: Path) -> bool:
             for s_root in sys_roots:
                 if resolved == s_root or resolved.is_relative_to(s_root):
                     return False
-
-            # All user directories on C: are safe
             return True
-
         return True
     except Exception:
         return True
 
 
-def _get_desktop() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_DESKTOP_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Desktop"
+# ── Path resolution ──────────────────────────────────────────────────────────
+
+def _drive_letter(expr: str) -> str | None:
+    """'d:' / 'd drive' / 'drive d' / 'drive d:' -> 'D'. Plain single letters do NOT match."""
+    m = re.match(r"^(?:in\s+)?(?:drive\s+([a-zA-Z])|([a-zA-Z])(?:\s+drive|:))\s*:?$", expr.strip().lower())
+    if m:
+        return (m.group(1) or m.group(2)).upper()
+    return None
 
 
-def _get_downloads() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_DOWNLOAD_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Downloads"
-
-
-def _get_documents() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_DOCUMENTS_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Documents"
-
-
-def _get_pictures() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_PICTURES_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Pictures"
-
-
-def _get_music() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_MUSIC_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Music"
-
-
-def _get_videos() -> Path:
-    if _OS == "Linux":
-        xdg = os.environ.get("XDG_VIDEOS_DIR", "")
-        if xdg and Path(xdg).exists():
-            return Path(xdg)
-    return Path.home() / "Videos"
-
-
-def _get_temp() -> Path:
-    return Path(tempfile.gettempdir())
-
-
-def _get_appdata() -> Path:
-    app_data = os.environ.get("APPDATA")
-    return Path(app_data) if app_data else Path.home()
-
-
-def _get_onedrive() -> Path | None:
-    one_drive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
-    if one_drive and Path(one_drive).exists():
-        return Path(one_drive)
-    p = Path.home() / "OneDrive"
-    return p if p.exists() else None
-
-
-def _resolve_path(raw: str) -> Path:
-    """Robust conversational path resolution with multi-drive, navigation, and alias support."""
-    global _CURRENT_DIR
-    raw = (raw or "").strip().strip('"').strip("'")
+def _resolve_path(raw) -> Path:
+    """Conversational path resolution with multi-drive, navigation and alias support.
+    Accepts str or Path."""
+    raw = str(raw or "").strip().strip('"').strip("'")
 
     shortcuts: dict[str, Path] = {
         "desktop":       _get_desktop(),
@@ -251,32 +286,28 @@ def _resolve_path(raw: str) -> Path:
         shortcuts["onedrive"] = od
         shortcuts["one drive"] = od
 
-    lower = raw.lower().replace("\\", "/")
+    norm = raw.replace("\\", "/")
+    lower = norm.lower()
 
-    # Check direct dictionary shortcuts
     if lower in shortcuts:
         return shortcuts[lower]
 
-    # Handle drive queries like "d drive", "drive d", "d:", "drive d:", "in drive d", "c:", "e drive"
-    drive_match = re.match(r"^(?:in\s+)?(?:drive\s+)?([a-zA-Z])(?::|(?:\s+drive))?(?:/)?$", lower)
-    if drive_match:
-        letter = drive_match.group(1).upper()
+    letter = _drive_letter(lower.rstrip("/"))
+    if letter:
         return Path(f"{letter}:/")
 
-    # Handle prefixed drive / shortcut paths like "drive d/projects", "d drive/notes", "desktop/folder"
-    head, sep, rest = lower.partition("/")
-    if sep:
-        head_clean = head.strip()
-        # Check if head is a drive expression
-        dm = re.match(r"^(?:drive\s+)?([a-zA-Z])(?::|(?:\s+drive))?$", head_clean)
-        if dm:
-            letter = dm.group(1).upper()
+    # "drive d/projects", "desktop/folder", "D:/stuff"
+    head, sep, rest = norm.partition("/")
+    if sep and head.strip():
+        head_clean = head.strip().lower()
+        letter = _drive_letter(head_clean)
+        if letter:
             return Path(f"{letter}:/") / rest.strip("/")
         if head_clean in shortcuts:
             base = shortcuts[head_clean]
-            return base / rest.strip("/") if rest else base
+            return base / rest.strip("/") if rest.strip("/") else base
 
-    # Normalize Windows drive letter missing slash: e.g. "D:test.txt" -> "D:/test.txt"
+    # "D:test.txt" -> "D:/test.txt"
     if _OS == "Windows" and len(raw) >= 2 and raw[1] == ":" and (len(raw) == 2 or raw[2] not in ("/", "\\")):
         raw = raw[:2] + "/" + raw[2:]
 
@@ -284,20 +315,18 @@ def _resolve_path(raw: str) -> Path:
     if p.is_absolute():
         return p
 
-    # If relative, check if it exists in _CURRENT_DIR
-    if (_CURRENT_DIR / raw).exists():
-        return _CURRENT_DIR / raw
-    # Check if in D: drive
-    if (Path("D:/") / raw).exists():
-        return Path("D:/") / raw
-    # Check Desktop
-    if (_get_desktop() / raw).exists():
-        return _get_desktop() / raw
-    # Check Downloads
-    if (_get_downloads() / raw).exists():
-        return _get_downloads() / raw
+    # Relative: look in current dir, then common places
+    candidates = [_CURRENT_DIR, _get_desktop(), _get_downloads(), _get_documents()]
+    if _OS == "Windows":
+        candidates.append(Path("D:/"))
+    for base in candidates:
+        try:
+            if (base / raw).exists():
+                return base / raw
+        except Exception:
+            continue
 
-    # Case-insensitive match in _CURRENT_DIR
+    # Case-insensitive match in current dir
     try:
         if _CURRENT_DIR.exists() and _CURRENT_DIR.is_dir():
             for item in _CURRENT_DIR.iterdir():
@@ -309,12 +338,13 @@ def _resolve_path(raw: str) -> Path:
     return _CURRENT_DIR / raw
 
 
-def _format_size(b: int) -> str:
+def _format_size(b) -> str:
+    b = float(b)
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if b < 1024:
             return f"{b:.1f} {unit}"
         b /= 1024
-    return f"{b:.1f} TB"
+    return f"{b:.1f} PB"
 
 
 def _safe_trash(target: Path) -> str:
@@ -327,24 +357,79 @@ def _safe_trash(target: Path) -> str:
     return f"Moved to Trash: {target.name}"
 
 
+# ── Search across all locations ──────────────────────────────────────────────
+
+_SKIP_DIRS = {"windows", "program files", "program files (x86)", "node_modules",
+              "appdata", "$recycle.bin", "system volume information", ".git"}
+
+
+def _search_roots() -> list[Path]:
+    roots = [_CURRENT_DIR, _get_desktop(), _get_downloads(), _get_documents()]
+    if _OS == "Windows":
+        for letter in "DEFGH":
+            if Path(f"{letter}:/").exists():
+                roots.append(Path(f"{letter}:/"))
+    out, seen = [], set()
+    for r in roots:
+        try:
+            key = str(r.resolve()).lower()
+        except Exception:
+            key = str(r).lower()
+        if key not in seen and r.exists():
+            seen.add(key)
+            out.append(r)
+    return out
+
+
+def _search_everywhere(name: str = "", extension: str = "", limit: int = 10,
+                       time_cap: float = 12.0, roots: list[Path] | None = None) -> list[Path]:
+    """Search Desktop, Downloads, Documents and every other drive for matching files."""
+    roots = roots or _search_roots()
+    ext = ("." + extension.lstrip(".")).lower() if extension else ""
+    q = name.lower()
+    seen, found = set(), []
+    start = time.time()
+    for root in roots:
+        try:
+            for dp, dns, fns in os.walk(root):
+                dns[:] = [d for d in dns
+                          if not d.startswith((".", "$")) and d.lower() not in _SKIP_DIRS]
+                for fn in fns:
+                    if q and q not in fn.lower():
+                        continue
+                    if ext and not fn.lower().endswith(ext):
+                        continue
+                    p = Path(dp) / fn
+                    key = str(p).lower()
+                    if key not in seen:
+                        seen.add(key)
+                        found.append(p)
+                        if len(found) >= limit:
+                            return found
+                if time.time() - start > time_cap:
+                    return found
+        except Exception:
+            continue
+    return found
+
+
 # ── WINDOWS FILE EXPLORER INTEGRATION ────────────────────────────────────────
 
 def open_folder(path: str = "") -> str:
-    """Open a folder in Windows File Explorer, track it as current directory, and list contents."""
+    """Open a folder in File Explorer, track it as current directory, and list contents."""
     try:
         global _CURRENT_DIR
         target = _resolve_path(path) if path else _CURRENT_DIR
         if target.is_file():
             target = target.parent
         if not target.exists():
-            return f"Folder not found: {target}"
+            return _need(f"The folder '{target}' does not exist. Which folder do you mean?")
         if not _is_safe_path(target):
             return f"Access denied: {target}"
 
         _push_navigation(target)
         _CURRENT_DIR = target
 
-        # Launch File Explorer so user physically sees the folder open
         if _OS == "Windows":
             os.startfile(str(target))
         elif _OS == "Darwin":
@@ -359,13 +444,12 @@ def open_folder(path: str = "") -> str:
 
 
 def reveal_in_explorer(path: str = "", name: str = "") -> str:
-    """Open Windows File Explorer with the exact file or folder highlighted and selected."""
+    """Open File Explorer with the exact file or folder highlighted."""
     try:
-        global _CURRENT_DIR
         base = _resolve_path(path) if path else _CURRENT_DIR
         target = (base / name) if (name and not base.name.lower() == name.lower()) else base
         if not target.exists():
-            return f"Item not found to reveal: {target}"
+            return _need(f"I could not find '{target}' to reveal. Which folder is it in?")
         if not _is_safe_path(target):
             return f"Access denied: {target}"
 
@@ -384,7 +468,7 @@ def reveal_in_explorer(path: str = "", name: str = "") -> str:
 
 
 def get_open_explorers() -> str:
-    """List all folders currently open in Windows File Explorer windows."""
+    """List all folders currently open in File Explorer windows."""
     if _OS != "Windows":
         return "Open explorer window listing is only available on Windows."
     try:
@@ -414,7 +498,7 @@ def get_open_explorers() -> str:
 
 
 def close_explorer(path: str = "") -> str:
-    """Close specific or all open Windows File Explorer folder windows."""
+    """Close specific or all open File Explorer folder windows."""
     if _OS != "Windows":
         return "Closing explorer windows is only supported on Windows."
     try:
@@ -442,10 +526,9 @@ def close_explorer(path: str = "") -> str:
         return f"Could not close File Explorer window: {e}"
 
 
-# ── NAVIGATION STACK (BACK / FORWARD / UP / HISTORY) ─────────────────────────
+# ── NAVIGATION STACK ─────────────────────────────────────────────────────────
 
 def navigate_back() -> str:
-    """Navigate back to the previous folder in the session history."""
     global _CURRENT_DIR, _DIR_HISTORY_BACK, _DIR_HISTORY_FORWARD
     if not _DIR_HISTORY_BACK:
         return f"No previous folder in history. Currently at: {_CURRENT_DIR}"
@@ -453,14 +536,15 @@ def navigate_back() -> str:
     _DIR_HISTORY_FORWARD.append(_CURRENT_DIR)
     _CURRENT_DIR = prev
     if _OS == "Windows":
-        try: os.startfile(str(prev))
-        except Exception: pass
+        try:
+            os.startfile(str(prev))
+        except Exception:
+            pass
     contents = list_files(str(prev))
     return f"Navigated back to {prev.resolve()}.\n\n{contents}"
 
 
 def navigate_forward() -> str:
-    """Navigate forward to the next folder in the session history."""
     global _CURRENT_DIR, _DIR_HISTORY_BACK, _DIR_HISTORY_FORWARD
     if not _DIR_HISTORY_FORWARD:
         return f"No forward folder in history. Currently at: {_CURRENT_DIR}"
@@ -468,15 +552,15 @@ def navigate_forward() -> str:
     _DIR_HISTORY_BACK.append(_CURRENT_DIR)
     _CURRENT_DIR = next_dir
     if _OS == "Windows":
-        try: os.startfile(str(next_dir))
-        except Exception: pass
+        try:
+            os.startfile(str(next_dir))
+        except Exception:
+            pass
     contents = list_files(str(next_dir))
     return f"Navigated forward to {next_dir.resolve()}.\n\n{contents}"
 
 
 def navigate_up() -> str:
-    """Navigate up one level to the parent directory."""
-    global _CURRENT_DIR
     parent = _CURRENT_DIR.parent
     if parent == _CURRENT_DIR:
         return f"Already at the root: {_CURRENT_DIR}"
@@ -484,7 +568,6 @@ def navigate_up() -> str:
 
 
 def get_navigation_history() -> str:
-    """Show recent directory navigation breadcrumbs."""
     crumbs = []
     for p in _DIR_HISTORY_BACK[-5:]:
         crumbs.append(p.name or str(p))
@@ -494,10 +577,10 @@ def get_navigation_history() -> str:
     return "Navigation path: " + " -> ".join(crumbs)
 
 
-# ── DRIVES INSPECTION & STORAGE MONITOR ──────────────────────────────────────
+# ── DRIVES ───────────────────────────────────────────────────────────────────
 
 def list_drives() -> str:
-    """List all system drives with volume labels, types, total space, free space, and usage bars."""
+    """List all drives with labels, types, total/free space and usage bars."""
     drives = []
     if _OS == "Windows" and _WIN32_AVAILABLE:
         try:
@@ -520,13 +603,9 @@ def list_drives() -> str:
                     usage = shutil.disk_usage(d)
                     used_pct = (usage.used / usage.total * 100) if usage.total > 0 else 0
                     drives.append({
-                        "letter": d,
-                        "label": label,
-                        "type": dtype,
-                        "total": usage.total,
-                        "used": usage.used,
-                        "free": usage.free,
-                        "pct": used_pct,
+                        "letter": d, "label": label, "type": dtype,
+                        "total": usage.total, "used": usage.used,
+                        "free": usage.free, "pct": used_pct,
                     })
                 except Exception:
                     continue
@@ -534,8 +613,9 @@ def list_drives() -> str:
             pass
 
     if not drives:
-        # Fallback for Linux/macOS or when win32api fails
-        check_paths = [Path("/"), Path.home(), Path("C:/"), Path("D:/")]
+        check_paths = [Path("/"), Path.home()]
+        if _OS == "Windows":
+            check_paths += [Path(f"{c}:/") for c in "CDEFGH"]
         seen = set()
         for p in check_paths:
             try:
@@ -544,13 +624,9 @@ def list_drives() -> str:
                     usage = shutil.disk_usage(p)
                     pct = (usage.used / usage.total * 100) if usage.total > 0 else 0
                     drives.append({
-                        "letter": str(p),
-                        "label": p.name or "Root",
-                        "type": "Storage",
-                        "total": usage.total,
-                        "used": usage.used,
-                        "free": usage.free,
-                        "pct": pct,
+                        "letter": str(p), "label": p.name or "Root", "type": "Storage",
+                        "total": usage.total, "used": usage.used,
+                        "free": usage.free, "pct": pct,
                     })
             except Exception:
                 continue
@@ -571,10 +647,9 @@ def list_drives() -> str:
     return "\n".join(lines)
 
 
-# ── TREE VIEW GENERATOR ──────────────────────────────────────────────────────
+# ── TREE VIEW ────────────────────────────────────────────────────────────────
 
 def tree_view(path: str = "", max_depth: int = 2, max_items: int = 40) -> str:
-    """Generate a clean visual ASCII directory tree."""
     target = _resolve_path(path) if path else _CURRENT_DIR
     if not target.exists():
         return f"Path not found: {target}"
@@ -618,12 +693,11 @@ def tree_view(path: str = "", max_depth: int = 2, max_items: int = 40) -> str:
     return "\n".join(lines)
 
 
-# ── IN-FILE CONTENT SEARCH (GREP) ────────────────────────────────────────────
+# ── IN-FILE CONTENT SEARCH ───────────────────────────────────────────────────
 
 def search_file_content(path: str = "", query: str = "", extension: str = "", max_results: int = 15) -> str:
-    """Search for text or keywords inside files within a directory (deep grep)."""
     if not query:
-        return "No search query provided."
+        return _need("What text should I search for inside the files?")
     target = _resolve_path(path) if path else _CURRENT_DIR
     if not target.exists():
         return f"Search path not found: {target}"
@@ -635,6 +709,12 @@ def search_file_content(path: str = "", query: str = "", extension: str = "", ma
     scanned_count = 0
     max_scan_files = 300
     ext_filter = ("." + extension.lstrip(".")).lower() if extension else ""
+    binary_exts = {
+        ".pyc", ".pyd", ".exe", ".dll", ".so", ".dylib", ".bin", ".obj",
+        ".o", ".class", ".zip", ".tar", ".gz", ".7z", ".rar", ".iso",
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+        ".mp4", ".mkv", ".mov", ".avi", ".mp3", ".wav", ".flac", ".ogg"
+    }
 
     for item in target.rglob("*"):
         if scanned_count >= max_scan_files or len(results) >= max_results:
@@ -643,17 +723,8 @@ def search_file_content(path: str = "", query: str = "", extension: str = "", ma
             continue
         if ext_filter and item.suffix.lower() != ext_filter:
             continue
-        # Skip binary, compiled, and media files
-        binary_exts = {
-            ".pyc", ".pyd", ".exe", ".dll", ".so", ".dylib", ".bin", ".obj",
-            ".o", ".class", ".zip", ".tar", ".gz", ".7z", ".rar", ".iso",
-            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
-            ".mp4", ".mkv", ".mov", ".avi", ".mp3", ".wav", ".flac", ".ogg"
-        }
         if item.suffix.lower() in binary_exts:
             continue
-
-        # Skip files larger than 10MB
         try:
             if item.stat().st_size > 10 * 1024 * 1024:
                 continue
@@ -662,7 +733,6 @@ def search_file_content(path: str = "", query: str = "", extension: str = "", ma
 
         scanned_count += 1
         try:
-            # Check text files
             with open(item, "r", encoding="utf-8", errors="ignore") as f:
                 for line_num, line in enumerate(f, 1):
                     if clean_q in line.lower():
@@ -681,10 +751,9 @@ def search_file_content(path: str = "", query: str = "", extension: str = "", ma
     return f"Found {len(results)} match(es) for '{query}' in {target.name}/:\n" + "\n".join(results)
 
 
-# ── RECENT FILES DISCOVERY ───────────────────────────────────────────────────
+# ── RECENT FILES ─────────────────────────────────────────────────────────────
 
 def get_recent_files(path: str = "downloads", count: int = 10, hours: float = 0) -> str:
-    """Get the most recently created or modified files in a directory."""
     target = _resolve_path(path)
     if not target.exists():
         return f"Path not found: {target}"
@@ -722,10 +791,13 @@ def get_recent_files(path: str = "downloads", count: int = 10, hours: float = 0)
     return "\n".join(lines)
 
 
-# ── UNIVERSAL FOLDER ORGANIZER ───────────────────────────────────────────────
+# ── FOLDER ORGANIZER ─────────────────────────────────────────────────────────
 
-def organize_folder(path: str = "desktop") -> str:
-    """Organize ANY folder (desktop, downloads, or custom folder) into categorized subfolders."""
+def organize_folder(path: str = "") -> str:
+    """Organize a folder into categorized subfolders. Asks which folder if none given."""
+    if not str(path or "").strip():
+        return _need("Which folder should I organize? (e.g. Desktop, Downloads, D:/stuff)")
+
     type_map = {
         "Images":     {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico", ".heic", ".raw"},
         "Documents":  {".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".xls", ".xlsx", ".csv", ".ppt", ".pptx"},
@@ -738,7 +810,7 @@ def organize_folder(path: str = "desktop") -> str:
 
     target_dir = _resolve_path(path)
     if not target_dir.exists() or not target_dir.is_dir():
-        return f"Folder not found: {target_dir}"
+        return _need(f"The folder '{target_dir}' was not found. Which folder do you mean?")
     if not _is_safe_path(target_dir):
         return f"Access denied: {target_dir}"
 
@@ -805,10 +877,9 @@ def organize_folder(path: str = "desktop") -> str:
         return f"Could not organize folder: {e}"
 
 
-# ── DUPLICATE FILE FINDER ────────────────────────────────────────────────────
+# ── DUPLICATES ───────────────────────────────────────────────────────────────
 
 def find_duplicate_files(path: str = "downloads", max_results: int = 15) -> str:
-    """Find duplicate files in a folder by size and MD5 hash."""
     target = _resolve_path(path)
     if not target.exists():
         return f"Path not found: {target}"
@@ -842,10 +913,7 @@ def find_duplicate_files(path: str = "downloads", max_results: int = 15) -> str:
             try:
                 h = hashlib.md5()
                 with open(p, "rb") as f:
-                    chunk = f.read(65536)
-                    h.update(chunk)
-                    if sz > 65536:
-                        chunk = f.read(65536)
+                    while chunk := f.read(65536):   # hash the WHOLE file
                         h.update(chunk)
                 by_hash[h.hexdigest()].append(p)
             except Exception:
@@ -871,15 +939,16 @@ def find_duplicate_files(path: str = "downloads", max_results: int = 15) -> str:
     return "\n".join(lines)
 
 
-# ── COMPRESSION & EXTRACTION (ZIP / UNZIP) ───────────────────────────────────
+# ── COMPRESSION ──────────────────────────────────────────────────────────────
 
 def compress_target(path: str, name: str = "", destination: str = "", format: str = "zip") -> str:
-    """Compress a file or folder into a .zip archive."""
     try:
+        if not str(path or "").strip() and not str(name or "").strip():
+            return _need("What file or folder should I compress, and where is it?")
         base = _resolve_path(path)
         src = (base / name) if name else base
         if not src.exists():
-            return f"Source not found: {src}"
+            return _need(f"I could not find '{src}'. Which file/folder do you mean?")
         if not _is_safe_path(src):
             return f"Access denied: {src}"
 
@@ -897,10 +966,14 @@ def compress_target(path: str, name: str = "", destination: str = "", format: st
                 for root, _, files in os.walk(src):
                     for file in files:
                         full_p = Path(root) / file
-                        arcname = full_p.relative_to(src.parent)
-                        z.write(full_p, arcname=arcname)
+                        if full_p == dst:
+                            continue
+                        z.write(full_p, arcname=full_p.relative_to(src.parent))
             else:
                 z.write(src, arcname=src.name)
+
+        if not dst.is_file():
+            return f"FAILED: archive was not created at {dst}"
 
         def _undo_zip():
             if dst.exists():
@@ -909,30 +982,49 @@ def compress_target(path: str, name: str = "", destination: str = "", format: st
             return f"Archive '{dst.name}' already gone."
         push_undo(f"compressed {src.name} to {dst.name}", _undo_zip)
 
-        return f"Compressed successfully: {dst.name} ({_format_size(dst.stat().st_size)})"
+        return f"VERIFIED: compressed to {dst.resolve()} ({_format_size(dst.stat().st_size)})"
     except Exception as e:
         return f"Compression failed: {e}"
 
 
+def _safe_extract_zip(z: zipfile.ZipFile, dst: Path):
+    dst_res = dst.resolve()
+    for m in z.namelist():
+        if not (dst_res / m).resolve().is_relative_to(dst_res):
+            raise ValueError(f"Unsafe path in archive: {m}")
+    z.extractall(dst)
+
+
+def _safe_extract_tar(t: tarfile.TarFile, dst: Path):
+    dst_res = dst.resolve()
+    for m in t.getmembers():
+        if not (dst_res / m.name).resolve().is_relative_to(dst_res):
+            raise ValueError(f"Unsafe path in archive: {m.name}")
+    t.extractall(dst)
+
+
 def extract_archive(path: str, name: str = "", destination: str = "") -> str:
-    """Extract a .zip, .tar, or .tar.gz archive into a destination directory."""
     try:
+        if not str(path or "").strip() and not str(name or "").strip():
+            return _need("Which archive should I extract, and where is it?")
         base = _resolve_path(path)
         src = (base / name) if name else base
         if not src.exists():
-            return f"Archive not found: {src}"
+            return _need(f"I could not find the archive '{src}'. Where is it?")
         if not _is_safe_path(src):
             return f"Access denied: {src}"
 
         dst = _resolve_path(destination) if destination else src.parent / src.stem
+        if not _is_safe_path(dst):
+            return f"Access denied: {dst}"
         dst.mkdir(parents=True, exist_ok=True)
 
         if zipfile.is_zipfile(src):
             with zipfile.ZipFile(src, "r") as z:
-                z.extractall(dst)
+                _safe_extract_zip(z, dst)
         elif tarfile.is_tarfile(src):
             with tarfile.open(src, "r:*") as t:
-                t.extractall(dst)
+                _safe_extract_tar(t, dst)
         else:
             return f"Unsupported archive format: {src.suffix}"
 
@@ -941,15 +1033,14 @@ def extract_archive(path: str, name: str = "", destination: str = "") -> str:
         return f"Extraction failed: {e}"
 
 
-# ── HEAD, TAIL & CHECKSUM ────────────────────────────────────────────────────
+# ── HEAD / TAIL / CHECKSUM ───────────────────────────────────────────────────
 
 def file_head_tail(path: str, name: str = "", lines: int = 25, from_end: bool = False) -> str:
-    """Read the first or last N lines of a file."""
     try:
         base = _resolve_path(path)
         target = (base / name) if name else base
         if not target.exists() or not target.is_file():
-            return f"File not found: {target}"
+            return _need(f"File not found: '{target}'. Which file and folder do you mean?")
         if not _is_safe_path(target):
             return f"Access denied: {target}"
 
@@ -965,12 +1056,11 @@ def file_head_tail(path: str, name: str = "", lines: int = 25, from_end: bool = 
 
 
 def get_file_checksum(path: str, name: str = "", algorithm: str = "sha256") -> str:
-    """Calculate the cryptographic checksum (SHA-256 or MD5) of a file."""
     try:
         base = _resolve_path(path)
         target = (base / name) if name else base
         if not target.exists() or not target.is_file():
-            return f"File not found: {target}"
+            return _need(f"File not found: '{target}'. Which file and folder do you mean?")
         if not _is_safe_path(target):
             return f"Access denied: {target}"
 
@@ -979,16 +1069,14 @@ def get_file_checksum(path: str, name: str = "", algorithm: str = "sha256") -> s
             while chunk := f.read(65536):
                 h.update(chunk)
 
-        digest = h.hexdigest()
-        return f"{algorithm.upper()} checksum for '{target.name}':\n  {digest}"
+        return f"{algorithm.upper()} checksum for '{target.name}':\n  {h.hexdigest()}"
     except Exception as e:
         return f"Could not calculate checksum: {e}"
 
 
-# ── RECYCLE BIN OPERATIONS ───────────────────────────────────────────────────
+# ── RECYCLE BIN ──────────────────────────────────────────────────────────────
 
 def get_recycle_bin_info() -> str:
-    """Query item count and total size of deleted files in the Recycle Bin."""
     if _OS != "Windows":
         return "Recycle Bin query is only supported on Windows."
     try:
@@ -1006,20 +1094,20 @@ def get_recycle_bin_info() -> str:
         info.cbSize = ctypes.sizeof(SHQUERYRBINFO)
         res = ctypes.windll.shell32.SHQueryRecycleBinW(None, ctypes.byref(info))
         if res == 0:
-            size_str = _format_size(info.i64Size)
-            return f"Recycle Bin status:\n  Items : {info.i64NumItems}\n  Total Size : {size_str}"
+            return f"Recycle Bin status:\n  Items : {info.i64NumItems}\n  Total Size : {_format_size(info.i64Size)}"
         return "Could not query Recycle Bin information."
     except Exception as e:
         return f"Recycle Bin error: {e}"
 
 
-def empty_recycle_bin() -> str:
-    """Empty the Recycle Bin on Windows."""
+def empty_recycle_bin(confirmed: bool = False) -> str:
+    """Permanently empties the Recycle Bin. Requires explicit confirmation."""
     if _OS != "Windows":
         return "Emptying trash is only implemented on Windows."
+    if not confirmed:
+        return _need("Emptying the Recycle Bin is PERMANENT. Do you really want to empty it? (yes/no)")
     try:
         import ctypes
-        # SHERB_NOCONFIRMATION = 0x00000001, SHERB_NOPROGRESSUI = 0x00000002
         res = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x00000007)
         if res == 0:
             return "Recycle Bin has been completely emptied."
@@ -1028,30 +1116,54 @@ def empty_recycle_bin() -> str:
         return f"Could not empty Recycle Bin: {e}"
 
 
-# ── STANDARD FILE SYSTEM CRUD ────────────────────────────────────────────────
+# ── STANDARD FILE OPERATIONS ─────────────────────────────────────────────────
 
-def open_file(path: str, name: str = "", read_content: bool = True) -> str:
-    """Open a file on screen with its default application, and optionally read its content."""
+_TEXT_EXTS = {".txt", ".md", ".py", ".js", ".ts", ".html", ".css", ".json", ".xml",
+              ".csv", ".log", ".ini", ".cfg", ".yaml", ".yml", ".toml", ".bat", ".ps1",
+              ".sh", ".c", ".cpp", ".h", ".cs", ".go", ".rs", ".sql", ".java", ".rtf",
+              ".pdf", ".docx", ".xlsx", ".xls", ".ipynb"}
+
+
+def open_file(path: str = "", name: str = "", read_content: bool = True) -> str:
+    """Open a file with its default app. If no folder is given, searches Desktop,
+    Downloads, Documents and all other drives, and asks when unsure."""
     try:
         global _CURRENT_DIR
-        base = _resolve_path(path) if path else _CURRENT_DIR
-        target = (base / name) if (name and not base.name.lower() == name.lower()) else base
-        if target.is_dir() and name:
-            target = target / name
-        elif target.is_dir() and not target.is_file():
+        path, name = str(path or "").strip(), str(name or "").strip()
+        if not name and not path:
+            return _need("Which file do you want to open, and in which folder?")
+
+        if path:
+            base = _resolve_path(path)
+            if name:
+                if not base.is_dir():
+                    return _need(f"'{base}' is not a folder. Which folder is '{name}' in?")
+                target = base / name
+                if not target.exists():
+                    # try a partial-name match inside that folder only
+                    hits = [p for p in base.iterdir() if name.lower() in p.name.lower()]
+                    if len(hits) == 1:
+                        target = hits[0]
+                    elif len(hits) > 1:
+                        listing = "\n".join(f"  {i+1}. {m.name}" for i, m in enumerate(hits[:10]))
+                        return _need(f"Several items in '{base}' match '{name}':\n{listing}\nWhich one?")
+                    else:
+                        return _need(f"'{name}' is not in '{base}'. Check the name, or should I search all drives?")
+            else:
+                target = base
+                if not target.exists():
+                    return _need(f"I could not find '{target}'. Check the path, or should I search all drives?")
+        else:
+            matches = _search_everywhere(name)
+            if not matches:
+                return _need(f"No file named '{name}' found on Desktop, Downloads, Documents or other drives. Which folder is it in?")
+            if len(matches) > 1:
+                listing = "\n".join(f"  {i+1}. {m}" for i, m in enumerate(matches))
+                return _need(f"I found {len(matches)} matches:\n{listing}\nWhich one should I open?")
+            target = matches[0]
+
+        if target.is_dir():
             return open_folder(str(target))
-
-        if not target.exists():
-            try:
-                for item in _CURRENT_DIR.iterdir():
-                    if target.name.lower() in item.name.lower():
-                        target = item
-                        break
-            except Exception:
-                pass
-
-        if not target.exists():
-            return f"File not found: {target}"
         if not _is_safe_path(target):
             return f"Access denied: {target}"
 
@@ -1062,130 +1174,141 @@ def open_file(path: str, name: str = "", read_content: bool = True) -> str:
         else:
             subprocess.Popen(["xdg-open", str(target)])
 
-        msg = f"Opened '{target.name}' in default application."
-        if read_content and target.is_file():
-            read_result = read_file(str(target))
-            msg += f"\n\nContent:\n{read_result}"
-
+        _CURRENT_DIR = target.parent
+        msg = f"Opened: {target.resolve()}"
+        if read_content and target.suffix.lower() in _TEXT_EXTS:
+            msg += f"\n\nContent:\n{read_file(str(target))}"
         return msg
     except Exception as e:
         return f"Error opening file: {e}"
 
 
 def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
-    """List directory contents with file sizes and icons."""
     try:
         target = _resolve_path(path)
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         if not target.exists():
-            return f"Path not found: {target}"
+            return _need(f"The folder '{target}' does not exist. Which folder do you mean?")
         if not target.is_dir():
             return f"Not a directory: {target}"
 
         items = []
-        for item in sorted(target.iterdir()):
+        for item in sorted(target.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
             if not show_hidden and item.name.startswith("."):
                 continue
             if item.is_dir():
                 items.append(f"📁 {item.name}/")
             else:
-                size = _format_size(item.stat().st_size)
+                try:
+                    size = _format_size(item.stat().st_size)
+                except Exception:
+                    size = "?"
                 items.append(f"📄 {item.name} ({size})")
 
         if not items:
-            return f"Directory is empty: {target.name}/"
+            return f"Directory is empty: {target}"
 
-        return f"Contents of {target.name}/ ({len(items)} items):\n" + "\n".join(items)
+        return f"Contents of {target} ({len(items)} items):\n" + "\n".join(items)
     except PermissionError:
         return f"Permission denied: {path}"
     except Exception as e:
         return f"Error listing files: {e}"
 
 
-def create_file(path: str, name: str = "", content: str = "") -> str:
-    """Create a file with content at exact destination, auto-creating parent folders."""
+def create_file(path: str = "", name: str = "", content=None, overwrite: bool = False) -> str:
+    """Create a file. NEVER guesses: asks for location, name and content first,
+    and only reports success after reading the file back from disk."""
     try:
         global _CURRENT_DIR
-        raw_path = str(path or "").strip().strip('"').strip("'")
-        raw_name = str(name or "").strip().strip('"').strip("'")
+        path = str(path or "").strip().strip('"').strip("'")
+        name = str(name or "").strip().strip('"').strip("'")
 
-        if raw_name and (":" in raw_name or "/" in raw_name or "\\" in raw_name):
-            if not raw_path:
-                raw_path = raw_name
-                raw_name = ""
-            elif raw_path.lower() in ("desktop", "current", "here", "."):
-                raw_path = raw_name
-                raw_name = ""
+        if not path:
+            return _need("Where should I create the file? (e.g. Desktop, Downloads, D:/projects)")
+        if not name:
+            return _need("What should the file be called (with extension, e.g. notes.txt)?")
+        if content is None:
+            return _need(f"What should be written inside '{name}'? (say 'empty' for a blank file)")
+        content = str(content)
+        if content.strip().lower() == "empty":
+            content = ""
 
-        if not raw_path and not raw_name:
-            target = _CURRENT_DIR / "new_file.txt"
-        elif raw_path and not raw_name:
-            resolved = _resolve_path(raw_path)
-            target = resolved if resolved.suffix else resolved / "new_file.txt"
-        elif not raw_path and raw_name:
-            target = _CURRENT_DIR / raw_name
-        else:
-            base = _resolve_path(raw_path)
-            if base.suffix and base.name.lower() == raw_name.lower():
-                target = base
-            elif base.is_dir() or not base.suffix:
-                target = base / raw_name
-            else:
-                target = base.parent / raw_name
+        if any(c in name for c in '<>:"|?*') or name in (".", ".."):
+            return _need(f"'{name}' is not a valid file name. What name should I use?")
 
+        folder = _resolve_path(path)
+        if folder.is_file():
+            return _need(f"'{path}' is a file, not a folder. Which folder should I use?")
+        if not folder.exists():
+            return _need(f"The folder '{folder}' does not exist. Should I create it, or use another location?")
+
+        # allow name like "sub/notes.txt"
+        target = folder / name
         if not _is_safe_path(target):
             return f"Access denied: {target}"
+        if target.exists() and not overwrite:
+            return _need(f"'{target}' already exists. Overwrite it, or use a different name?")
 
-        target.parent.mkdir(parents=True, exist_ok=True)
-        existed = target.exists()
         previous = None
+        existed = target.exists()
         if existed:
             try:
                 previous = target.read_text(encoding="utf-8", errors="ignore")
             except Exception:
                 previous = None
 
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
 
-        if not target.exists():
-            return f"Error: File was not created at {target}"
+        # VERIFY - never claim success without checking
+        if not target.is_file():
+            return f"FAILED: file was NOT created at {target}"
+        if target.read_text(encoding="utf-8", errors="ignore") != content:
+            return f"FAILED: file exists at {target} but content does not match."
 
         _CURRENT_DIR = target.parent
         push_undo(
             f"created {target.name}",
             _undo_write(target, previous) if existed else _undo_create(target),
         )
-        return f"File created successfully: {target.resolve()} ({len(content)} characters written)."
+        return f"VERIFIED: created {target.resolve()} ({len(content)} characters)."
     except Exception as e:
-        return f"Could not create file: {e}"
+        return f"FAILED to create file: {e}"
 
 
-def create_folder(path: str, name: str = "") -> str:
-    """Create a new folder at target location."""
+def create_folder(path: str = "", name: str = "") -> str:
     try:
+        if not str(path or "").strip():
+            return _need("Where should I create the folder? (e.g. Desktop, D:/projects)")
+        if not str(name or "").strip():
+            return _need("What should the new folder be called?")
         base = _resolve_path(path)
-        target = (base / name) if name else base
+        target = base / name
         if not _is_safe_path(target):
             return f"Access denied: {target}"
-        already = target.exists()
+        if target.exists():
+            return f"Folder already exists: {target.resolve()}"
         target.mkdir(parents=True, exist_ok=True)
-        if not already:
-            push_undo(f"created folder {target.name}", _undo_create(target))
-        return f"Folder created: {target.name}"
+        if not target.is_dir():
+            return f"FAILED: folder was NOT created at {target}"
+        push_undo(f"created folder {target.name}", _undo_create(target))
+        return f"VERIFIED: folder created at {target.resolve()}"
     except Exception as e:
-        return f"Could not create folder: {e}"
+        return f"FAILED to create folder: {e}"
 
 
-def delete_file(path: str, name: str = "") -> str:
-    """Safely move a file or folder to the Recycle Bin with undo capability."""
+def delete_file(path: str = "", name: str = "") -> str:
+    """Move a file or folder to the Recycle Bin (with undo)."""
     try:
+        if not str(path or "").strip() and not str(name or "").strip():
+            return _need("What should I delete, and in which folder?")
         base = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         if not target.exists():
-            return f"Not found: {target.name}"
+            return _need(f"I could not find '{target}'. Which file/folder do you mean?")
 
         protected = {
             _get_desktop(), _get_downloads(), _get_documents(),
@@ -1198,6 +1321,8 @@ def delete_file(path: str, name: str = "") -> str:
         original = target.resolve()
         result = _safe_trash(target)
         if result.startswith("Moved to Trash"):
+            if original.exists():
+                return f"FAILED: '{original}' is still there."
             push_undo(f"deleted {original.name}", lambda p=original: _restore_from_trash(p))
         return result
     except PermissionError:
@@ -1206,17 +1331,18 @@ def delete_file(path: str, name: str = "") -> str:
         return f"Could not delete: {e}"
 
 
-def move_file(path: str, name: str = "", destination: str = "") -> str:
-    """Move a file or folder to destination directory."""
+def move_file(path: str = "", name: str = "", destination: str = "") -> str:
     try:
+        if not str(path or "").strip() and not str(name or "").strip():
+            return _need("What should I move, and where is it?")
+        if not str(destination or "").strip():
+            return _need("Where should I move it to?")
         base = _resolve_path(path)
         src = (base / name) if name else base
-        dst = _resolve_path(destination) if destination else None
+        dst = _resolve_path(destination)
 
         if not src.exists():
-            return f"Source not found: {src.name}"
-        if dst is None:
-            return "No destination specified."
+            return _need(f"I could not find '{src}'. Which file/folder do you mean?")
         if not _is_safe_path(src):
             return f"Access denied (source): {src}"
         if not _is_safe_path(dst):
@@ -1224,27 +1350,32 @@ def move_file(path: str, name: str = "", destination: str = "") -> str:
 
         if dst.is_dir():
             dst = dst / src.name
+        if dst.exists():
+            return _need(f"'{dst}' already exists. Use a different destination or name?")
 
         dst.parent.mkdir(parents=True, exist_ok=True)
         origin = src.resolve()
         shutil.move(str(src), str(dst))
+        if not dst.exists():
+            return f"FAILED: '{dst}' does not exist after the move."
         push_undo(f"moved {origin.name} to {dst.parent.name}/", _undo_move(origin, dst.resolve()))
-        return f"Moved: {src.name} -> {dst.parent.name}/"
+        return f"VERIFIED: moved {origin} -> {dst.resolve()}"
     except Exception as e:
         return f"Could not move: {e}"
 
 
-def copy_file(path: str, name: str = "", destination: str = "") -> str:
-    """Copy a file or folder to destination directory."""
+def copy_file(path: str = "", name: str = "", destination: str = "") -> str:
     try:
+        if not str(path or "").strip() and not str(name or "").strip():
+            return _need("What should I copy, and where is it?")
+        if not str(destination or "").strip():
+            return _need("Where should I copy it to?")
         base = _resolve_path(path)
         src = (base / name) if name else base
-        dst = _resolve_path(destination) if destination else None
+        dst = _resolve_path(destination)
 
         if not src.exists():
-            return f"Source not found: {src.name}"
-        if dst is None:
-            return "No destination specified."
+            return _need(f"I could not find '{src}'. Which file/folder do you mean?")
         if not _is_safe_path(src):
             return f"Access denied (source): {src}"
         if not _is_safe_path(dst):
@@ -1252,6 +1383,8 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
 
         if dst.is_dir():
             dst = dst / src.name
+        if dst.exists():
+            return _need(f"'{dst}' already exists. Use a different destination or name?")
 
         dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
@@ -1259,7 +1392,11 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
         else:
             shutil.copy2(str(src), str(dst))
 
+        if not dst.exists():
+            return f"FAILED: copy was not created at {dst}"
+
         _copy = dst.resolve()
+
         def _undo_copy():
             if not _copy.exists():
                 return f"The copy '{_copy.name}' is already gone."
@@ -1269,67 +1406,83 @@ def copy_file(path: str, name: str = "", destination: str = "") -> str:
                 _copy.unlink()
             return f"Removed the copy in {_copy.parent.name}/."
         push_undo(f"copied {src.name} to {dst.parent.name}/", _undo_copy)
-        return f"Copied: {src.name} -> {dst.parent.name}/"
+        return f"VERIFIED: copied {src.resolve()} -> {_copy}"
     except Exception as e:
         return f"Could not copy: {e}"
 
 
-def rename_file(path: str, name: str = "", new_name: str = "") -> str:
-    """Rename a file or folder."""
+def rename_file(path: str = "", name: str = "", new_name: str = "") -> str:
     try:
+        if not str(path or "").strip() and not str(name or "").strip():
+            return _need("What should I rename, and where is it?")
+        if not str(new_name or "").strip():
+            return _need("What should the new name be?")
         base = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         if not target.exists():
-            return f"Not found: {target.name}"
-        if not new_name:
-            return "No new name provided."
+            return _need(f"I could not find '{target}'. Which file/folder do you mean?")
 
         new_path = target.parent / new_name
         if new_path.exists():
-            return f"A file named '{new_name}' already exists here."
+            return _need(f"A file named '{new_name}' already exists there. Use a different name?")
 
         old_path = target.resolve()
         target.rename(new_path)
+        if not new_path.exists():
+            return f"FAILED: '{new_path}' does not exist after rename."
         push_undo(f"renamed {old_path.name} to {new_name}", _undo_move(old_path, new_path.resolve()))
-        return f"Renamed: {target.name} -> {new_name}"
+        return f"VERIFIED: renamed {old_path.name} -> {new_name} (in {new_path.parent})"
     except Exception as e:
         return f"Could not rename: {e}"
 
 
-def read_file(path: str, name: str = "", max_chars: int = 5000, open_viewer: bool = False) -> str:
-    """Read and extract text from ANY file: PDF, Word (.docx), Excel (.xlsx), CSV, Jupyter (.ipynb), text, code."""
+def read_file(path: str = "", name: str = "", max_chars: int = 5000, open_viewer: bool = False) -> str:
+    """Read text from PDF, Word, Excel, Jupyter, text and code files.
+    If no folder is given, searches all drives for the file name."""
     try:
-        global _CURRENT_DIR
-        base = _resolve_path(path) if path else _CURRENT_DIR
-        target = (base / name) if (name and not base.name.lower() == name.lower()) else base
-        if target.is_dir() and name:
-            target = target / name
+        path, name = str(path or "").strip(), str(name or "").strip()
+        if not path and not name:
+            return _need("Which file should I read, and in which folder?")
+
+        if path:
+            base = _resolve_path(path)
+            target = (base / name) if name else base
+            if target.is_dir() and not name:
+                return _need(f"'{target}' is a folder. Which file inside it should I read?")
+            if not target.exists() and name and base.is_dir():
+                hits = [p for p in base.iterdir() if p.is_file() and name.lower() in p.name.lower()]
+                if len(hits) == 1:
+                    target = hits[0]
+                elif len(hits) > 1:
+                    listing = "\n".join(f"  {i+1}. {m.name}" for i, m in enumerate(hits[:10]))
+                    return _need(f"Several files in '{base}' match '{name}':\n{listing}\nWhich one?")
+        else:
+            matches = _search_everywhere(name)
+            if not matches:
+                return _need(f"No file named '{name}' found. Which folder is it in?")
+            if len(matches) > 1:
+                listing = "\n".join(f"  {i+1}. {m}" for i, m in enumerate(matches))
+                return _need(f"I found {len(matches)} matches:\n{listing}\nWhich one should I read?")
+            target = matches[0]
 
         if not target.exists():
-            try:
-                for item in _CURRENT_DIR.iterdir():
-                    if target.name.lower() in item.name.lower():
-                        target = item
-                        break
-            except Exception:
-                pass
-
-        if not target.exists():
-            return f"File not found: {target.name}"
+            return _need(f"File not found: '{target}'. Check the name and folder.")
         if not target.is_file():
             return f"Not a file: {target.name}"
         if not _is_safe_path(target):
             return f"Access denied: {target}"
 
         if open_viewer and _OS == "Windows":
-            try: os.startfile(str(target))
-            except Exception: pass
+            try:
+                os.startfile(str(target))
+            except Exception:
+                pass
 
         ext = target.suffix.lower()
 
-        # 1. PDF Documents
+        # PDF
         if ext == ".pdf":
             extracted = ""
             try:
@@ -1356,12 +1509,12 @@ def read_file(path: str, name: str = "", max_chars: int = 5000, open_viewer: boo
                     return f"Error reading PDF: {e}"
 
             if not extracted.strip():
-                return f"PDF '{target.name}' opened, but contains no extractable text (may be scanned)."
+                return f"PDF '{target.name}' contains no extractable text (may be scanned)."
             if len(extracted) > max_chars:
                 extracted = extracted[:max_chars] + f"\n\n[Truncated — {len(extracted)} total chars]"
-            return f"Read from {target.name}:\n\n{extracted}"
+            return f"Read from {target}:\n\n{extracted}"
 
-        # 2. Word Documents (.docx)
+        # Word
         if ext == ".docx":
             try:
                 import docx
@@ -1370,28 +1523,38 @@ def read_file(path: str, name: str = "", max_chars: int = 5000, open_viewer: boo
                 if not doc_text.strip():
                     return f"Word document '{target.name}' is empty."
                 if len(doc_text) > max_chars:
-                    doc_text = doc_text[:max_chars] + f"\n\n[Truncated]"
-                return f"Read from {target.name}:\n\n{doc_text}"
+                    doc_text = doc_text[:max_chars] + "\n\n[Truncated]"
+                return f"Read from {target}:\n\n{doc_text}"
             except Exception as e:
                 return f"Error reading Word document: {e}"
 
-        # 3. Excel Spreadsheets (.xlsx, .xls)
+        # Excel (.xlsx via openpyxl; old .xls needs xlrd)
         if ext in (".xlsx", ".xls"):
             try:
+                if ext == ".xls":
+                    import xlrd
+                    wb = xlrd.open_workbook(str(target))
+                    sh = wb.sheet_by_index(0)
+                    rows = []
+                    for r in range(min(sh.nrows, 20)):
+                        vals = [str(c) for c in sh.row_values(r) if str(c).strip()]
+                        if vals:
+                            rows.append(" | ".join(vals))
+                    return f"Read from {target}:\n\nSheets: {', '.join(wb.sheet_names())}\n" + "\n".join(rows[:15])
                 import openpyxl
-                wb = openpyxl.load_workbook(target, read_only=True)
+                wb = openpyxl.load_workbook(target, read_only=True, data_only=True)
                 summary = f"Spreadsheet with sheets: {', '.join(wb.sheetnames)}\n"
                 sheet = wb.active
                 rows = []
                 for r in sheet.iter_rows(max_row=20, values_only=True):
-                    if any(r):
+                    if any(c is not None for c in r):
                         rows.append(" | ".join(str(c) for c in r if c is not None))
                 summary += "\n".join(rows[:15])
-                return f"Read from {target.name}:\n\n{summary}"
+                return f"Read from {target}:\n\n{summary}"
             except Exception as e:
                 return f"Error reading spreadsheet: {e}"
 
-        # 4. Jupyter Notebooks (.ipynb)
+        # Jupyter
         if ext == ".ipynb":
             try:
                 nb = json.loads(target.read_text(encoding="utf-8", errors="ignore"))
@@ -1406,11 +1569,11 @@ def read_file(path: str, name: str = "", max_chars: int = 5000, open_viewer: boo
                 joined = "\n\n".join(cells_text)
                 if len(joined) > max_chars:
                     joined = joined[:max_chars] + "\n\n[Truncated]"
-                return f"Read from Jupyter Notebook {target.name}:\n\n{joined}"
+                return f"Read from Jupyter Notebook {target}:\n\n{joined}"
             except Exception as e:
                 return f"Error parsing Jupyter notebook: {e}"
 
-        # 5. Standard text / code files
+        # Text / code
         try:
             content = target.read_text(encoding="utf-8", errors="ignore")
         except Exception:
@@ -1426,14 +1589,23 @@ def read_file(path: str, name: str = "", max_chars: int = 5000, open_viewer: boo
         return f"Could not read file: {e}"
 
 
-def write_file(path: str, name: str = "", content: str = "", append: bool = False) -> str:
-    """Write or append text content to a file."""
+def write_file(path: str = "", name: str = "", content=None, append: bool = False) -> str:
+    """Write or append text to an EXISTING-or-new file. Asks for anything missing; verifies result."""
     try:
+        if not str(path or "").strip():
+            return _need("Which folder is the file in (or should it go in)?")
+        if not str(name or "").strip():
+            return _need("Which file should I write to?")
+        if content is None:
+            return _need(f"What text should I {'append to' if append else 'write into'} '{name}'?")
+        content = str(content)
+
         base = _resolve_path(path)
-        target = (base / name) if name else base
+        if not base.is_dir():
+            return _need(f"The folder '{base}' does not exist. Which folder do you mean?")
+        target = base / name
         if not _is_safe_path(target):
             return f"Access denied: {target}"
-        target.parent.mkdir(parents=True, exist_ok=True)
 
         previous: str | None = None
         undoable = True
@@ -1450,56 +1622,57 @@ def write_file(path: str, name: str = "", content: str = "", append: bool = Fals
         with open(target, mode, encoding="utf-8") as f:
             f.write(content)
 
-        action = "Appended to" if append else "Written to"
+        if not target.is_file():
+            return f"FAILED: '{target}' does not exist after writing."
+        if not append and target.read_text(encoding="utf-8", errors="ignore") != content:
+            return f"FAILED: content in '{target}' does not match what was requested."
+
+        action = "appended to" if append else "written to"
         if undoable:
             push_undo(f"wrote to {target.name}", _undo_write(target, previous))
-            return f"{action}: {target.name}"
-        return f"{action}: {target.name}. (Too large for in-memory undo)"
+            return f"VERIFIED: {action} {target.resolve()}"
+        return f"VERIFIED: {action} {target.resolve()} (too large for in-memory undo)"
     except Exception as e:
         return f"Could not write file: {e}"
 
 
-def find_files(name: str = "", extension: str = "", path: str = "home", max_results: int = 20) -> str:
-    """Find files by filename or extension across a folder tree."""
+def find_files(name: str = "", extension: str = "", path: str = "", max_results: int = 20) -> str:
+    """Find files by name/extension. With no folder given, searches Desktop, Downloads,
+    Documents and every other drive."""
     try:
-        search_path = _resolve_path(path)
-        if not _is_safe_path(search_path):
-            return f"Access denied: {search_path}"
-        if not search_path.exists():
-            return f"Search path not found: {path}"
+        if not name and not extension:
+            return _need("What file name or extension should I look for?")
 
-        results = []
-        dir_count = 0
-        max_dirs = 500
+        if path:
+            search_path = _resolve_path(path)
+            if not _is_safe_path(search_path):
+                return f"Access denied: {search_path}"
+            if not search_path.exists():
+                return _need(f"The folder '{search_path}' does not exist. Which folder should I search?")
+            roots = [search_path]
+            where = str(search_path)
+        else:
+            roots = None
+            where = "Desktop, Downloads, Documents and other drives"
 
-        for item in search_path.rglob("*"):
-            if item.is_dir():
-                dir_count += 1
-                if dir_count > max_dirs:
-                    break
-                continue
-            if not item.is_file():
-                continue
-            if extension and item.suffix.lower() != ("." + extension.lstrip(".")).lower():
-                continue
-            if name and name.lower() not in item.name.lower():
-                continue
-            size = _format_size(item.stat().st_size)
-            results.append(f"📄 {item.name} ({size}) — {item.parent}")
-            if len(results) >= max_results:
-                break
+        matches = _search_everywhere(name=name, extension=extension, limit=max_results,
+                                     time_cap=20.0, roots=roots)
+        if not matches:
+            return f"No match for '{name or extension}' in {where}."
 
-        if not results:
-            query = name or extension or "files"
-            return f"No {query} found in {search_path.name}/"
-
-        return f"Found {len(results)} file(s):\n" + "\n".join(results)
+        lines = []
+        for p in matches:
+            try:
+                size = _format_size(p.stat().st_size)
+            except Exception:
+                size = "?"
+            lines.append(f"📄 {p.name} ({size}) — {p.parent}")
+        return f"Found {len(lines)} file(s) in {where}:\n" + "\n".join(lines)
     except Exception as e:
         return f"Search error: {e}"
 
 
 def get_largest_files(path: str = "downloads", count: int = 10) -> str:
-    """Get the largest files in a directory."""
     count = min(max(count, 1), 50)
     try:
         search_path = _resolve_path(path)
@@ -1516,7 +1689,7 @@ def get_largest_files(path: str = "downloads", count: int = 10) -> str:
                 except Exception:
                     continue
 
-        files.sort(reverse=True)
+        files.sort(key=lambda x: x[0], reverse=True)
         top = files[:count]
 
         if not top:
@@ -1531,7 +1704,6 @@ def get_largest_files(path: str = "downloads", count: int = 10) -> str:
 
 
 def get_disk_usage(path: str = "home") -> str:
-    """Get disk storage usage for a given directory or drive."""
     try:
         target = _resolve_path(path)
         usage = shutil.disk_usage(target)
@@ -1546,15 +1718,16 @@ def get_disk_usage(path: str = "home") -> str:
         return f"Could not get disk usage: {e}"
 
 
-def get_file_info(path: str, name: str = "") -> str:
-    """Get detailed file metadata and properties."""
+def get_file_info(path: str = "", name: str = "") -> str:
     try:
+        if not str(path or "").strip() and not str(name or "").strip():
+            return _need("Which file or folder do you want info about?")
         base = _resolve_path(path)
         target = (base / name) if name else base
         if not _is_safe_path(target):
             return f"Access denied: {target}"
         if not target.exists():
-            return f"Not found: {target.name}"
+            return _need(f"I could not find '{target}'. Which file/folder do you mean?")
 
         stat = target.stat()
         info = {
@@ -1580,7 +1753,7 @@ def file_controller(
     session_memory=None,
 ) -> str:
     params = parameters or {}
-    action = params.get("action", "").lower().strip()
+    action = str(params.get("action", "")).lower().strip()
 
     raw_path = (
         params.get("path")
@@ -1599,16 +1772,21 @@ def file_controller(
         or ""
     )
 
-    path = raw_path
-    name = raw_name
+    path = str(raw_path or "")
+    name = str(raw_name or "")
 
     if player:
-        player.write_log(f"[file] {action} {name or path}")
+        try:
+            player.write_log(f"[file] {action} {name or path}")
+        except Exception:
+            pass
 
     try:
-        # 1. Navigation & Explorer Windows
+        # 1. Navigation & Explorer
         if action in ("open_folder", "navigate", "go_to", "open_dir", "cd", "explorer", "open_explorer"):
-            return open_folder(path or _CURRENT_DIR)
+            if not path:
+                return _need("Which folder should I open? (e.g. Desktop, Downloads, D:/projects)")
+            return open_folder(path)
 
         elif action in ("reveal", "reveal_in_explorer", "show_in_explorer", "show_in_folder", "select_in_explorer", "locate"):
             return reveal_in_explorer(path=path, name=name)
@@ -1636,19 +1814,24 @@ def file_controller(
             return list_drives()
 
         elif action in ("disk_usage", "usage", "storage_usage"):
-            return get_disk_usage(path or _CURRENT_DIR)
+            return get_disk_usage(path or str(_CURRENT_DIR))
 
         # 3. Viewing & Inspecting
         elif action in ("open_file", "open", "launch", "view"):
-            p_res = _resolve_path(path) if path else _CURRENT_DIR
-            if p_res.is_dir() and not name:
-                return open_folder(str(p_res))
-            return open_file(path, name=name)
+            if path and not name:
+                p_res = _resolve_path(path)
+                if p_res.is_dir():
+                    return open_folder(str(p_res))
+            return open_file(path=path, name=name)
 
         elif action in ("list", "ls", "dir"):
-            return list_files(path or _CURRENT_DIR)
+            if not path:
+                return _need("Which folder should I list? (e.g. Desktop, Downloads, D:/)")
+            return list_files(path)
 
         elif action in ("tree", "tree_view", "hierarchy", "folder_tree"):
+            if not path:
+                return _need("Which folder should I show the tree of?")
             return tree_view(
                 path=path,
                 max_depth=int(params.get("max_depth") or params.get("depth") or 2),
@@ -1656,7 +1839,7 @@ def file_controller(
             )
 
         elif action in ("read", "read_file"):
-            return read_file(path, name=name)
+            return read_file(path=path, name=name)
 
         elif action in ("head", "first_lines"):
             return file_head_tail(
@@ -1684,15 +1867,15 @@ def file_controller(
         # 4. Search & Discovery
         elif action in ("find", "find_files", "search"):
             return find_files(
-                name=name or params.get("name", ""),
+                name=name or str(params.get("query", "")),
                 extension=params.get("extension", ""),
-                path=path or "home",
+                path=path,
                 max_results=min(int(params.get("max_results", 20)), 50),
             )
 
         elif action in ("search_content", "grep", "find_in_files", "search_in_files", "contains"):
             return search_file_content(
-                path=path or _CURRENT_DIR,
+                path=path or str(_CURRENT_DIR),
                 query=params.get("query") or params.get("content") or name,
                 extension=params.get("extension", ""),
                 max_results=min(int(params.get("max_results", 15)), 40),
@@ -1717,9 +1900,13 @@ def file_controller(
                 max_results=int(params.get("max_results", 15))
             )
 
-        # 5. File Operations & Creation
-        elif action in ("create_file", "create", "write_file", "make_file", "new_file"):
-            return create_file(path=path, name=name, content=params.get("content", ""))
+        # 5. Create / modify
+        elif action in ("create_file", "create", "make_file", "new_file"):
+            return create_file(
+                path=path, name=name,
+                content=params.get("content"),          # None if not given -> asks the user
+                overwrite=bool(params.get("overwrite", False)),
+            )
 
         elif action in ("create_folder", "make_folder", "mkdir"):
             return create_folder(path, name=name)
@@ -1736,16 +1923,18 @@ def file_controller(
         elif action == "rename":
             return rename_file(path, name=name, new_name=params.get("new_name", ""))
 
-        elif action == "write":
+        elif action in ("write", "write_file", "append"):
             return write_file(
                 path, name=name,
-                content=params.get("content", ""),
-                append=params.get("append", False)
+                content=params.get("content"),
+                append=bool(params.get("append", False)) or action == "append"
             )
 
         # 6. Organization & Compression
         elif action in ("organize", "organize_folder", "organize_desktop", "clean_folder", "clean_desktop"):
-            return organize_folder(path=path or "desktop")
+            if action == "organize_desktop" or action == "clean_desktop":
+                path = path or "desktop"
+            return organize_folder(path=path)
 
         elif action in ("zip", "compress", "archive"):
             return compress_target(
@@ -1765,7 +1954,7 @@ def file_controller(
             return get_recycle_bin_info()
 
         elif action in ("empty_trash", "empty_recycle_bin"):
-            return empty_recycle_bin()
+            return empty_recycle_bin(confirmed=bool(params.get("confirmed", False)))
 
         else:
             return f"Unknown action: '{action}'"
@@ -1779,17 +1968,24 @@ TOOL = {
     "name": "file_controller",
     "description": (
         "Universal file system controller & explorer with full Windows integration: "
-        "open_folder (navigates to drive D:, Desktop, or any folder in File Explorer and shows contents), "
-        "reveal (opens File Explorer with that exact file or folder selected/highlighted on screen), "
-        "list_drives (shows all drives C:, D:, E:, etc. with labels, types, and free space meters), "
-        "tree (visualizes hierarchical folder tree), "
-        "recent_files (finds newly downloaded or modified files), "
-        "search_content / grep (searches for text or code INSIDE files), "
-        "organize_folder (categorizes files in Desktop, Downloads, or any folder into Images, Documents, Code, etc. with instant undo), "
-        "open_file (launches file on screen and reads content), "
-        "read (extracts text from PDF, Word .docx, Excel, Jupyter .ipynb, code, text), "
-        "create_file, create_folder, delete, move, copy, rename, zip, unzip, duplicates, head, tail, checksum, back, up, recycle_bin. "
-        "ALWAYS use this tool for file/folder navigation, creation, and explorer control."
+        "open_folder (opens drive D:, Desktop, or any folder in File Explorer and shows contents), "
+        "reveal (opens File Explorer with that file/folder selected), "
+        "list_drives, tree, list, recent_files, "
+        "search_content / grep (searches text INSIDE files), "
+        "find (searches file names on Desktop, Downloads, Documents and ALL drives), "
+        "organize_folder, open_file, read (PDF, Word, Excel, Jupyter, code, text), "
+        "create_file, create_folder, delete, move, copy, rename, write, zip, unzip, "
+        "duplicates, head, tail, checksum, back, up, recycle_bin. "
+        "ALWAYS use this tool for file/folder navigation, creation, and explorer control. "
+        "RULES: "
+        "(1) For create_file you MUST have path (folder), name and content from the user. "
+        "If ANY is missing, ask the user - never guess and never default to Desktop. "
+        "(2) For open_file/read: if the user gave a folder pass it as path; otherwise leave path "
+        "empty so all drives are searched. "
+        "(3) If a result starts with NEED_INFO, ask the user that exact question and wait for the answer, then call again. "
+        "(4) Only tell the user something was created/moved/copied/renamed/written if the result "
+        "starts with VERIFIED. If it starts with FAILED, tell the user it failed and why. "
+        "(5) Never pass confirmed=true for empty_trash unless the user explicitly said yes."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -1806,15 +2002,15 @@ TOOL = {
             },
             "path": {
                 "type": "STRING",
-                "description": "File or folder path or shortcut: 'desktop', 'downloads', 'documents', 'D:/', 'D:/folder', 'drive e', 'C:/file.txt'"
+                "description": "Folder (or file) path or shortcut the USER named: 'desktop', 'downloads', 'documents', 'D:/', 'D:/folder', 'drive e'. Leave empty if the user did not say - then ask them."
             },
             "name": {
                 "type": "STRING",
-                "description": "File or folder name for search, open, create, delete, or reveal"
+                "description": "File or folder name (e.g. notes.txt)"
             },
             "destination": {
                 "type": "STRING",
-                "description": "Destination directory or file path for move, copy, zip, or unzip"
+                "description": "Destination folder or file path for move, copy, zip, or unzip"
             },
             "new_name": {
                 "type": "STRING",
@@ -1822,7 +2018,19 @@ TOOL = {
             },
             "content": {
                 "type": "STRING",
-                "description": "Content for create_file/write or search query for search_content"
+                "description": "Text to put inside the file for create_file/write. Use the word 'empty' for a blank file. Omit if the user has not said."
+            },
+            "overwrite": {
+                "type": "BOOLEAN",
+                "description": "Only true if the user agreed to overwrite an existing file"
+            },
+            "append": {
+                "type": "BOOLEAN",
+                "description": "For write: add to the end of the file instead of replacing it"
+            },
+            "confirmed": {
+                "type": "BOOLEAN",
+                "description": "For empty_trash: true only after the user explicitly confirmed"
             },
             "query": {
                 "type": "STRING",

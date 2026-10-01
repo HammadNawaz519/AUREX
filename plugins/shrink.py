@@ -74,7 +74,7 @@ class ShrinkPillWindow(QWidget):
         self._timer.setInterval(8)       # 120+ FPS high-refresh rate
         self._timer.timeout.connect(self._on_tick)
 
-        self._position_bottom_right()
+        self._position_top_left()
 
     # The timer only runs while the pill is actually on screen.
     def showEvent(self, event):
@@ -138,7 +138,7 @@ class ShrinkPillWindow(QWidget):
             self.update()
 
     # ── placement ────────────────────────────────────────────────────────────
-    def _position_bottom_right(self):
+    def _position_top_left(self):
         app = QApplication.instance()
         if not app:
             return
@@ -146,8 +146,8 @@ class ShrinkPillWindow(QWidget):
         if screen:
             ag = screen.availableGeometry()
             self.move(
-                ag.right() - self.width() - 28,
-                ag.bottom() - self.height() - 48
+                ag.left() + 24,
+                ag.top() + 24
             )
 
     def _snap_to_edge(self):

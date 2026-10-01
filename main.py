@@ -609,7 +609,7 @@ class JarvisLive:
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
 
-        self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
+        self._enhanced_live = False  # proactive audio / v1alpha; disabled by default for websocket stability
         self._tuned_live    = True  # turn-taking / media / thinking knobs; same fallback
 
         _base_dir = Path(__file__).resolve().parent
@@ -2186,6 +2186,15 @@ class JarvisLive:
                     self._conn_backoff = 0
                     continue
 
+                def _all_err_text(exc: BaseException) -> str:
+                    parts = [str(exc), type(exc).__name__]
+                    if hasattr(exc, "exceptions"):
+                        for sub in exc.exceptions:
+                            parts.append(_all_err_text(sub))
+                    return " ".join(parts)
+
+                err_str = _all_err_text(e)
+
                 # A resumption handle the server will not accept — expired, or
                 # belonging to a session it has since dropped. Without this, the
                 # same dead handle would be replayed on every retry and the
@@ -2193,11 +2202,13 @@ class JarvisLive:
                 # survive a reconnect would be the thing preventing one. Drop it
                 # once and let the next attempt start clean.
                 if _resumed_with and (
-                    "resum" in str(e).lower()
-                    or "handle" in str(e).lower()
-                    or "INVALID_ARGUMENT" in str(e)
-                    or "NOT_FOUND" in str(e)
-                    or "1011" in str(e)
+                    "resum" in err_str.lower()
+                    or "handle" in err_str.lower()
+                    or "INVALID_ARGUMENT" in err_str
+                    or "NOT_FOUND" in err_str
+                    or "1011" in err_str
+                    or "1008" in err_str
+                    or "aborted" in err_str.lower()
                 ):
                     print("[AUREX] 🔗 Resumption handle rejected — starting a fresh session")
                     self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")
@@ -2205,7 +2216,6 @@ class JarvisLive:
                     self._conn_backoff = 0
                     continue
 
-                err_str = str(e)
                 print(f"[AUREX] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 
@@ -2233,6 +2243,8 @@ class JarvisLive:
                     or "Unknown name" in err_str
                     or "unexpected keyword" in err_str
                     or "1011" in err_str
+                    or "1008" in err_str
+                    or "aborted" in err_str.lower()
                     or "internal error" in err_str.lower()
                 ):
                     self._enhanced_live = False
