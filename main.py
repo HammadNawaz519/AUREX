@@ -53,6 +53,7 @@ from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     save_session_summary, pop_last_session,
     search_memory, set_trim_notifier,
+    record_chat_turn, format_recent_chat_for_prompt, get_last_conversation_state,
 )
 
 # The file-backed tools (open_app, web_search, browser_control, …) are no longer

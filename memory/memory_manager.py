@@ -477,3 +477,152 @@ def pop_last_session() -> dict | None:
         except Exception as e:
             print(f"[Memory] ⚠️ pop_last_session error: {e}")
             return None
+
+
+# ── Recent Chat & Spoken Language Persistence ────────────────────────────────
+
+RECENT_CHAT_PATH = BASE_DIR / "memory" / "recent_chat.json"
+_chat_lock = Lock()
+
+
+def detect_language(text: str) -> str | None:
+    """Detects primary language: Hindi (Devanagari or Romanized/Hinglish), Urdu, or English."""
+    if not text or not text.strip():
+        return None
+    # 1. Devanagari script
+    if any("\u0900" <= c <= "\u097f" for c in text):
+        return "Hindi"
+    # 2. Arabic / Urdu script
+    if any("\u0600" <= c <= "\u06ff" for c in text):
+        return "Urdu"
+    # 3. Romanized Hindi / Urdu keywords
+    words = set(re.findall(r"\b[a-zA-Z]+\b", text.lower()))
+    hindi_keywords = {
+        "karo", "kardo", "karna", "kaise", "kya", "kyun", "kyu", "batao", "sunao",
+        "chhota", "chota", "bada", "bade", "theek", "shukriya", "mera", "meri", "mere",
+        "tera", "teri", "tere", "aap", "aapka", "aapki", "tum", "tumhara", "hum",
+        "nahi", "nahin", "hoga", "hogi", "hai", "hain", "kuch", "bolo", "baat",
+        "karoge", "chahiye", "accha", "achha", "dost", "namaste", "dhanyawad",
+        "shuru", "band", "khol", "kholo", "roko", "gaana", "sunao", "suno", "samjhe",
+        "aurex", "bhai", "yaar"
+    }
+    if len(words & hindi_keywords) >= 2 or (len(words) <= 4 and len(words & hindi_keywords) >= 1):
+        return "Hindi"
+    # 4. English words
+    english_keywords = {
+        "the", "is", "are", "you", "what", "how", "please", "can", "open", "send",
+        "email", "system", "file", "computer", "hello", "hi", "thanks", "thank",
+        "show", "tell", "weather", "play", "song", "music", "desktop", "screen",
+        "minimize", "maximize", "shrink", "restore", "close", "restart", "start"
+    }
+    if len(words & english_keywords) >= 2 or (len(words) <= 3 and len(words & english_keywords) >= 1):
+        return "English"
+    return None
+
+
+def get_last_conversation_state() -> dict:
+    """Returns the persistent recent chat state and last spoken language."""
+    if not RECENT_CHAT_PATH.exists():
+        mem = load_memory()
+        identity = mem.get("identity", {})
+        fallback_lang = (
+            _entry_value(identity.get("current_language"))
+            or _entry_value(identity.get("language"))
+            or "English"
+        )
+        return {"last_language": fallback_lang, "turns": [], "updated_at": ""}
+    with _chat_lock:
+        try:
+            data = json.loads(RECENT_CHAT_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception as e:
+            print(f"[Memory] ⚠️ Error loading recent_chat.json: {e}")
+    return {"last_language": "English", "turns": [], "updated_at": ""}
+
+
+def record_chat_turn(speaker: str, text: str, language: str | None = None) -> None:
+    """Records a single conversation turn and detects/updates last active language."""
+    text = (text or "").strip()
+    if not text:
+        return
+
+    detected_lang = language or detect_language(text)
+    now = datetime.now()
+    time_str = now.strftime("%I:%M %p")
+
+    with _chat_lock:
+        try:
+            state = {}
+            if RECENT_CHAT_PATH.exists():
+                try:
+                    state = json.loads(RECENT_CHAT_PATH.read_text(encoding="utf-8"))
+                except Exception:
+                    state = {}
+            if not isinstance(state, dict):
+                state = {}
+
+            turns = state.get("turns", [])
+            if not isinstance(turns, list):
+                turns = []
+
+            turns.append({
+                "speaker": speaker,
+                "text": text,
+                "time": time_str
+            })
+            if len(turns) > 30:
+                turns = turns[-30:]
+
+            state["turns"] = turns
+            state["updated_at"] = now.isoformat()
+
+            if detected_lang:
+                state["last_language"] = detected_lang
+
+            RECENT_CHAT_PATH.parent.mkdir(parents=True, exist_ok=True)
+            RECENT_CHAT_PATH.write_text(
+                json.dumps(state, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            print(f"[Memory] ⚠️ Failed recording chat turn: {e}")
+
+    # Also sync into long_term.json current_language
+    if detected_lang:
+        try:
+            update_memory({"identity": {"current_language": {"value": detected_lang}}})
+        except Exception:
+            pass
+
+
+def format_recent_chat_for_prompt(max_turns: int = 12) -> str:
+    """Formats recent turns and last active language from recent_chat.json for prompt injection."""
+    state = get_last_conversation_state()
+    turns = state.get("turns", [])
+    last_lang = state.get("last_language") or "English"
+
+    blocks = [
+        f"[CONTINUING LANGUAGE PREFERENCE]\n"
+        f"You and the user were most recently conversing in: {last_lang}.\n"
+        f"Respond and address the user in {last_lang} unless they explicitly speak in another language."
+    ]
+
+    if turns:
+        recent = turns[-max_turns:]
+        convo_lines = []
+        for t in recent:
+            spk = t.get("speaker", "Speaker")
+            txt = t.get("text", "").strip()
+            if txt:
+                convo_lines.append(f"{spk}: {txt}")
+
+        if convo_lines:
+            blocks.append(
+                "[PREVIOUS CONVERSATION CONTEXT — WHERE YOU LEFT OFF]\n"
+                "Here are the most recent exchanges from before this session began. "
+                "Use this context to maintain smooth continuity if the user refers to recent topics, actions, or asks what you were doing:\n"
+                + "\n".join(convo_lines)
+            )
+
+    return "\n\n".join(blocks) + "\n\n"
