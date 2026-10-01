@@ -125,6 +125,10 @@ _CURRENT_DIR: Path = _get_desktop()
 _DIR_HISTORY_BACK: list[Path] = []
 _DIR_HISTORY_FORWARD: list[Path] = []
 
+# The ONE File Explorer window this tool controls. Opening folders re-uses it
+# (like clicking through folders) unless the user asks for a NEW window.
+_EXPLORER_HWND: int | None = None
+
 
 def get_current_dir() -> Path:
     return _CURRENT_DIR
@@ -413,10 +417,99 @@ def _search_everywhere(name: str = "", extension: str = "", limit: int = 10,
     return found
 
 
-# ── WINDOWS FILE EXPLORER INTEGRATION ────────────────────────────────────────
+# ── WINDOWS FILE EXPLORER INTEGRATION (re-uses ONE window) ───────────────────
 
-def open_folder(path: str = "") -> str:
-    """Open a folder in File Explorer, track it as current directory, and list contents."""
+def _explorer_windows() -> list:
+    """COM objects of every open File Explorer folder window (Windows only)."""
+    import win32com.client
+    shell = win32com.client.Dispatch("Shell.Application")
+    wins = []
+    for w in shell.Windows():
+        try:
+            if os.path.basename(str(w.FullName)).lower() == "explorer.exe":
+                wins.append(w)
+        except Exception:
+            continue
+    return wins
+
+
+def _explorer_hwnds() -> set:
+    try:
+        return {int(w.HWND) for w in _explorer_windows()}
+    except Exception:
+        return set()
+
+
+def _find_tracked_window():
+    """The Explorer window this tool opened earlier, if it is still open — else None."""
+    global _EXPLORER_HWND
+    if _EXPLORER_HWND is None:
+        return None
+    try:
+        for w in _explorer_windows():
+            if int(w.HWND) == _EXPLORER_HWND:
+                return w
+    except Exception:
+        pass
+    _EXPLORER_HWND = None
+    return None
+
+
+def _bring_to_front(hwnd: int):
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.ShowWindow(hwnd, 9)          # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def _launch_new_explorer(args: list) -> None:
+    """Start a NEW Explorer window and remember it as the one to re-use."""
+    global _EXPLORER_HWND
+    before = _explorer_hwnds()
+    subprocess.Popen(args)
+    for _ in range(40):                     # wait up to ~4 s for the window to appear
+        time.sleep(0.1)
+        new = _explorer_hwnds() - before
+        if new:
+            _EXPLORER_HWND = sorted(new)[-1]
+            _bring_to_front(_EXPLORER_HWND)
+            return
+
+
+def _open_in_explorer(target: Path, new_window: bool = False) -> str:
+    """Show a folder in File Explorer.
+    Re-uses the window opened earlier (just navigates it) unless new_window=True.
+    Returns a short status phrase."""
+    global _EXPLORER_HWND
+    if _OS == "Darwin":
+        subprocess.Popen(["open", str(target)])
+        return "Opened in Finder"
+    if _OS != "Windows":
+        subprocess.Popen(["xdg-open", str(target)])
+        return "Opened in the file manager"
+
+    try:
+        if not new_window:
+            w = _find_tracked_window()
+            if w is not None:
+                try:
+                    w.Navigate2(str(target))
+                    _bring_to_front(int(w.HWND))
+                    return "Opened in the SAME File Explorer window"
+                except Exception:
+                    _EXPLORER_HWND = None       # window died mid-way → open a fresh one
+        _launch_new_explorer(["explorer.exe", str(target)])
+        return "Opened in a NEW File Explorer window"
+    except ImportError:
+        os.startfile(str(target))
+        return "Opened in File Explorer (cannot re-use the window — install pywin32: pip install pywin32)"
+
+
+def open_folder(path: str = "", new_window: bool = False) -> str:
+    """Open a folder in File Explorer (same window by default), track it as current, and list contents."""
     try:
         global _CURRENT_DIR
         target = _resolve_path(path) if path else _CURRENT_DIR
@@ -430,21 +523,16 @@ def open_folder(path: str = "") -> str:
         _push_navigation(target)
         _CURRENT_DIR = target
 
-        if _OS == "Windows":
-            os.startfile(str(target))
-        elif _OS == "Darwin":
-            subprocess.Popen(["open", str(target)])
-        else:
-            subprocess.Popen(["xdg-open", str(target)])
-
+        status = _open_in_explorer(target, new_window=new_window)
         contents = list_files(str(target))
-        return f"Opened {target.resolve()} in File Explorer.\n\n{contents}"
+        return f"{status}: {target.resolve()}\n\n{contents}"
     except Exception as e:
         return f"Error opening folder: {e}"
 
 
-def reveal_in_explorer(path: str = "", name: str = "") -> str:
-    """Open File Explorer with the exact file or folder highlighted."""
+def reveal_in_explorer(path: str = "", name: str = "", new_window: bool = False) -> str:
+    """Show a file/folder highlighted in File Explorer (same window by default)."""
+    global _EXPLORER_HWND
     try:
         base = _resolve_path(path) if path else _CURRENT_DIR
         target = (base / name) if (name and not base.name.lower() == name.lower()) else base
@@ -455,8 +543,31 @@ def reveal_in_explorer(path: str = "", name: str = "") -> str:
 
         resolved_str = str(target.resolve())
         if _OS == "Windows":
-            subprocess.Popen(f'explorer.exe /select,"{resolved_str}"', shell=True)
-            return f"Revealed and selected '{target.name}' in Windows File Explorer."
+            try:
+                if not new_window:
+                    w = _find_tracked_window()
+                    if w is not None:
+                        try:
+                            w.Navigate2(str(target.parent))
+                            time.sleep(0.3)
+                            for _ in range(40):
+                                if not w.Busy:
+                                    break
+                                time.sleep(0.1)
+                            doc = w.Document
+                            item = doc.Folder.ParseName(target.name)
+                            if item is None:
+                                raise RuntimeError("item not found in window")
+                            doc.SelectItem(item, 29)     # select + deselect others + scroll into view + focus
+                            _bring_to_front(int(w.HWND))
+                            return f"Selected '{target.name}' in the SAME File Explorer window."
+                        except Exception:
+                            _EXPLORER_HWND = None
+                _launch_new_explorer(["explorer.exe", "/select,", resolved_str])
+                return f"Revealed and selected '{target.name}' in a NEW File Explorer window."
+            except ImportError:
+                subprocess.Popen(["explorer.exe", "/select,", resolved_str])
+                return f"Revealed '{target.name}' in File Explorer (install pywin32 to re-use one window)."
         elif _OS == "Darwin":
             subprocess.Popen(["open", "-R", resolved_str])
             return f"Revealed '{target.name}' in Finder."
@@ -535,11 +646,10 @@ def navigate_back() -> str:
     prev = _DIR_HISTORY_BACK.pop()
     _DIR_HISTORY_FORWARD.append(_CURRENT_DIR)
     _CURRENT_DIR = prev
-    if _OS == "Windows":
-        try:
-            os.startfile(str(prev))
-        except Exception:
-            pass
+    try:
+        _open_in_explorer(prev)
+    except Exception:
+        pass
     contents = list_files(str(prev))
     return f"Navigated back to {prev.resolve()}.\n\n{contents}"
 
@@ -551,11 +661,10 @@ def navigate_forward() -> str:
     next_dir = _DIR_HISTORY_FORWARD.pop()
     _DIR_HISTORY_BACK.append(_CURRENT_DIR)
     _CURRENT_DIR = next_dir
-    if _OS == "Windows":
-        try:
-            os.startfile(str(next_dir))
-        except Exception:
-            pass
+    try:
+        _open_in_explorer(next_dir)
+    except Exception:
+        pass
     contents = list_files(str(next_dir))
     return f"Navigated forward to {next_dir.resolve()}.\n\n{contents}"
 
@@ -1783,13 +1892,16 @@ def file_controller(
 
     try:
         # 1. Navigation & Explorer
-        if action in ("open_folder", "navigate", "go_to", "open_dir", "cd", "explorer", "open_explorer"):
-            if not path:
+        if action in ("open_folder", "navigate", "go_to", "open_dir", "cd", "explorer", "open_explorer",
+                      "open_new", "open_new_folder", "new_window", "new_explorer"):
+            new_win = bool(params.get("new_window", False)) or action in (
+                "open_new", "open_new_folder", "new_window", "new_explorer")
+            if not path and not new_win:
                 return _need("Which folder should I open? (e.g. Desktop, Downloads, D:/projects)")
-            return open_folder(path)
+            return open_folder(path, new_window=new_win)
 
         elif action in ("reveal", "reveal_in_explorer", "show_in_explorer", "show_in_folder", "select_in_explorer", "locate"):
-            return reveal_in_explorer(path=path, name=name)
+            return reveal_in_explorer(path=path, name=name, new_window=bool(params.get("new_window", False)))
 
         elif action in ("back", "navigate_back", "go_back"):
             return navigate_back()
@@ -1978,6 +2090,7 @@ TOOL = {
         "duplicates, head, tail, checksum, back, up, recycle_bin. "
         "ALWAYS use this tool for file/folder navigation, creation, and explorer control. "
         "RULES: "
+        "(0) File Explorer: every open_folder/reveal/back/up re-uses the SAME Explorer window, so opening D: and then a folder inside it just navigates that window. ONLY set new_window=true (or use action open_new_folder) when the user says 'new window', 'open new' or 'another window'. "
         "(1) For create_file you MUST have path (folder), name and content from the user. "
         "If ANY is missing, ask the user - never guess and never default to Desktop. "
         "(2) For open_file/read: if the user gave a folder pass it as path; otherwise leave path "
@@ -1997,7 +2110,7 @@ TOOL = {
                     "create_file | create_folder | delete | move | copy | rename | write | "
                     "find | search_content | recent_files | largest | duplicates | organize_folder | "
                     "zip | unzip | head | tail | checksum | back | forward | up | history | "
-                    "recycle_bin | empty_trash | open_explorers | close_explorer | info"
+                    "recycle_bin | empty_trash | open_explorers | close_explorer | open_new_folder | info"
                 )
             },
             "path": {
@@ -2027,6 +2140,10 @@ TOOL = {
             "append": {
                 "type": "BOOLEAN",
                 "description": "For write: add to the end of the file instead of replacing it"
+            },
+            "new_window": {
+                "type": "BOOLEAN",
+                "description": "true ONLY if the user asks for a new/another File Explorer window. Default false = re-use the same window"
             },
             "confirmed": {
                 "type": "BOOLEAN",

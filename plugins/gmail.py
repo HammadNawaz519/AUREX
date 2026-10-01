@@ -122,27 +122,60 @@ def load_contacts() -> dict:
 
 
 def resolve_recipient(recipient_input: str) -> tuple[str, str]:
-    """Resolves contact alias or raw email address."""
-    raw = recipient_input.strip()
+    """Resolves contact alias, handle, or raw email address.
+    Defaults to @gmail.com if no domain or provider is specified."""
+    raw = (recipient_input or "").strip()
+    if not raw:
+        return "", ""
+
+    # Check for <user@domain.com> format
     email_match = re.search(r"<([^>]+)>", raw)
     if email_match:
         email = email_match.group(1).strip()
         name = raw.split("<")[0].strip().strip('"').strip("'")
-        return email, name or email
+        return email.lower(), name or email
 
-    if "@" in raw and "." in raw:
-        return raw.lower(), raw.split("@")[0].title()
+    # Handle voice transcripts like "username at domain.com" or "user at itu.edu.pk"
+    at_match = re.search(r"^([\w\.\-\+]+)\s+(?:at|on|@)\s+([a-zA-Z0-9\.\-]+)$", raw, re.IGNORECASE)
+    if at_match:
+        handle = at_match.group(1).strip()
+        domain = at_match.group(2).strip().lstrip("@")
+        if "." not in domain and domain.lower() == "itu":
+            domain = "itu.edu.pk"
+        elif "." not in domain and domain.lower() in ("gmail", "google"):
+            domain = "gmail.com"
+        raw = f"{handle}@{domain}"
 
+    # If it is already a valid email address with an @ and a domain
+    if "@" in raw:
+        parts = raw.split("@", 1)
+        handle = parts[0].strip()
+        domain = parts[1].strip()
+        if "." not in domain and domain.lower() == "itu":
+            domain = "itu.edu.pk"
+        elif "." not in domain and domain.lower() in ("gmail", "google"):
+            domain = "gmail.com"
+        elif "." not in domain:
+            domain = f"{domain}.com"
+        email = f"{handle}@{domain}".lower()
+        return email, handle.replace(".", " ").title()
+
+    # Check contacts list
     contacts = load_contacts()
     normalized = raw.lower().replace(" ", "_")
     if normalized in contacts:
-        return contacts[normalized], raw.title()
+        return contacts[normalized].lower(), raw.title()
 
     for k, v in contacts.items():
         if k in normalized or normalized in k:
-            return v, k.replace("_", " ").title()
+            return v.lower(), k.replace("_", " ").title()
 
-    return raw, raw.title()
+    # If just a handle / username was provided (e.g. 'hamad54'), default to @gmail.com!
+    clean_handle = re.sub(r"[^\w\.\-\+]", "", raw.lower())
+    if clean_handle:
+        return f"{clean_handle}@gmail.com", clean_handle.replace(".", " ").title()
+
+    return raw.lower(), raw.title()
 
 
 # ── THEMES & STYLING ──────────────────────────────────────────────────────────
@@ -543,13 +576,6 @@ def build_html_email(
             </td>
           </tr>
 
-          <!-- DIVIDER -->
-          <tr>
-            <td style="padding: 0 28px;">
-              <div style="border-top: 1px solid {theme['border_color']}; font-size: 1px; line-height: 1px;">&nbsp;</div>
-            </td>
-          </tr>
-
           <!-- FOOTER -->
           <tr>
             <td align="center" style="padding: 20px 28px; text-align: center; background-color: {theme['card_bg']};">
@@ -642,21 +668,6 @@ def send_email(
             sender_name=sender_name,
             msg_id=msg["Message-ID"]
         )
-
-        if player and hasattr(player, "show_content"):
-            try:
-                preview = (
-                    f"TO: {to_name} <{to_email}>\n"
-                    f"SUBJECT: {subject}\n"
-                    f"THEME: {theme}\n"
-                    f"STATUS: Delivered via SSL SMTP\n"
-                    f"TIME: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                    f"--- MESSAGE BODY ---\n{body[:350]}"
-                    f"{'...' if len(body) > 350 else ''}"
-                )
-                player.show_content("GMAIL DISPATCH", preview)
-            except Exception:
-                pass
 
         return True, f"Email delivered to {to_name} ({to_email}) with subject '{subject}'."
 
@@ -790,7 +801,12 @@ PLUGIN = {
             },
             "to": {
                 "type": "STRING",
-                "description": "Recipient email address (e.g. 'john@example.com') or contact name (e.g. 'Dad', 'Hammad')"
+                "description": (
+                    "Recipient email address or handle. If user provides only a username/handle (e.g. 'hamad54'), "
+                    "pass it directly — it automatically defaults to @gmail.com. Do NOT ask user to say '@gmail.com'. "
+                    "If user explicitly specifies a different domain (e.g. '@itu.edu.pk' or 'hamad54@itu.edu.pk'), provide that domain. "
+                    "If user mentions an alternate system or institution without full address, clarify briefly whether to send to their Gmail or that system."
+                )
             },
             "subject": {
                 "type": "STRING",
@@ -909,7 +925,10 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         player=player
     )
 
+    to_email, _ = resolve_recipient(to)
+    target_addr = to_email or to
+
     if ok:
-        return f"Sir, I have dispatched your email to {to} with the subject '{subject}'. It has been delivered and saved to your sent records."
+        return f"Sir, I have dispatched your email to {target_addr} with the subject '{subject}'. It has been delivered and saved to your sent records."
     else:
-        return f"Sir, I encountered an issue sending the email to {to}: {msg}"
+        return f"Sir, I encountered an issue sending the email to {target_addr}: {msg}"
