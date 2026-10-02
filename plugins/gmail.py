@@ -162,7 +162,7 @@ def resolve_recipient(recipient_input: str) -> tuple[str, str]:
 
     # Check contacts list
     contacts = load_contacts()
-    normalized = raw.lower().replace(" ", "_")
+    normalized = re.sub(r"\s+", "_", raw.lower())
     if normalized in contacts:
         return contacts[normalized].lower(), raw.title()
 

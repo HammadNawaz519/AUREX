@@ -79,7 +79,7 @@ try:
     from pywinauto import Desktop as PywinDesktop, Application as PywinApp
     from pywinauto.controls.uiawrapper import UIAWrapper
     _PYWINAUTO = True
-except ImportError:
+except Exception:
     _PYWINAUTO = False
 
 try:
