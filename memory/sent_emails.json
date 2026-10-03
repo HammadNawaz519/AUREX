@@ -9,5 +9,71 @@
     "body": "Hammad, हमने हाल ही में कुछ अहम इंप्रूवमेंट्स की हैं। अब तुम्हारी पसंदीदा ज़बान 'Hindi' की जगह 'null' सेव्ड है, और हमने उर्दू में बात करना भी शुरू कर दिया है।",
     "theme": "atelier_slate",
     "sender": "Hammad Nawaz (via AUREX)"
+  },
+  {
+    "id": "<179093331075.7820.16225446973753141561@aurex.local>",
+    "timestamp": "2026-10-02T14:28:33.767802",
+    "date_str": "October 02, 2026 at 02:28 PM",
+    "to_name": "Hammad",
+    "to_email": "hammadnawaz519@gmail.com",
+    "subject": "System Verification",
+    "body": "Dear Hammad,\n\nThis is a quick verification email.\n\nCurrent Date: October 02, 2026.\n\nRegards,\nAUREX",
+    "theme": "atelier_slate",
+    "sender": "Hammad Nawaz (via AUREX)"
+  },
+  {
+    "id": "<179093332723.7820.2621268777881237067@aurex.local>",
+    "timestamp": "2026-10-02T14:28:50.224861",
+    "date_str": "October 02, 2026 at 02:28 PM",
+    "to_name": "Hammad",
+    "to_email": "hammadnawaz519@gmail.com",
+    "subject": "Today's Date",
+    "body": "Hello Hammad,\n\nThis email has been sent to present you today's date: October 02, 2026.\n\nBest regards,\nAUREX",
+    "theme": "atelier_slate",
+    "sender": "Hammad Nawaz (via AUREX)"
+  },
+  {
+    "id": "<179093341811.7820.15044845867943210082@aurex.local>",
+    "timestamp": "2026-10-02T14:30:20.643697",
+    "date_str": "October 02, 2026 at 02:30 PM",
+    "to_name": "Hammad",
+    "to_email": "hammadnawaz519@gmail.com",
+    "subject": "Current System Condition",
+    "body": "Hammad,\n\nHere is the current condition of your system:\n\nCPU Usage: 30.2%\nRAM Usage: 85.7% (Nearly exhausted)\nProcess Count: 325\n\nThe high RAM usage is the main concern and might be slowing down your system.\n\nRegards,\nAUREX",
+    "theme": "atelier_slate",
+    "sender": "Hammad Nawaz (via AUREX)"
+  },
+  {
+    "id": "<179093363989.7196.164672668077278704@aurex.local>",
+    "timestamp": "2026-10-02T14:34:02.219586",
+    "date_str": "October 02, 2026 at 02:34 PM",
+    "to_name": "Hammadnawaz276",
+    "to_email": "hammadnawaz276@gmail.com",
+    "subject": "System Specs and RAM Usage",
+    "body": "Hammad,\n\nHere are the system specs:\n\n- CPU Usage: 23.7%\n- RAM Usage: 75.3% (11.8 GB / 15.7 GB)\n- Uptime: 13h 45m\n- Process Count: 324",
+    "theme": "atelier_slate",
+    "sender": "Hammad Nawaz (via AUREX)"
+  },
+  {
+    "id": "<179095813741.6088.3843403120337951311@aurex.local>",
+    "timestamp": "2026-10-02T21:22:21.043459",
+    "date_str": "October 02, 2026 at 09:22 PM",
+    "to_name": "Mafianawaz123",
+    "to_email": "mafianawaz123@gmail.com",
+    "subject": "System Update and Daily Summary",
+    "body": "Hammad, your system metrics for today (Friday, October 02, 2026) are: CPU Usage: 20.4%, RAM Used: 9.6GB out of 15.7GB, Uptime: 0 hours 58 minutes, and 263 processes are running. The weather report for Lahore is also being displayed.",
+    "theme": "atelier_slate",
+    "sender": "Hammad Nawaz (via AUREX)"
+  },
+  {
+    "id": "<179095817190.6088.17605300289933372714@aurex.local>",
+    "timestamp": "2026-10-02T21:22:59.492930",
+    "date_str": "October 02, 2026 at 09:22 PM",
+    "to_name": "Muntahamalik508",
+    "to_email": "muntahamalik508@gmail.com",
+    "subject": "System Update and Daily Summary",
+    "body": "Hammad, your system metrics for today (Friday, October 02, 2026) are: CPU Usage: 20.4%, RAM Used: 9.6GB out of 15.7GB, Uptime: 0 hours 58 minutes, and 263 processes are running. The weather report for Lahore is also being displayed.",
+    "theme": "atelier_slate",
+    "sender": "Hammad Nawaz (via AUREX)"
   }
 ]
