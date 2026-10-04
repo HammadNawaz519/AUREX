@@ -61,6 +61,7 @@ class ShrinkPillWindow(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("AUREX Pill Mode\n• Click or Double-click to restore\n• Drag to reposition")
 
+
         self._state: str = "SLEEPING"
         self._phase: float = 0.0
         self._disp: float = 0.0           # smoothed volume strength 0..1
