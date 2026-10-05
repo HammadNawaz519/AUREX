@@ -103,17 +103,35 @@ def _search_and_extract(query: str) -> Optional[dict]:
             "noplaylist": True,
             "quiet": True,
             "no_warnings": True,
-            "default_search": "ytsearch1",
-            "extract_flat": False,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Search and fully extract in one pass so we get real stream URLs
             info = ydl.extract_info(f"ytsearch1:{query}", download=False)
             if not info or "entries" not in info or not info["entries"]:
                 return None
             entry = info["entries"][0]
+
+            # entry["url"] is the actual audio stream URL after full extraction
+            stream_url = entry.get("url")
+
+            # Fallback: if still no direct URL, re-extract from webpage_url
+            if not stream_url:
+                webpage_url = entry.get("webpage_url") or entry.get("id")
+                if not webpage_url:
+                    return None
+                if not webpage_url.startswith("http"):
+                    webpage_url = f"https://www.youtube.com/watch?v={webpage_url}"
+                entry = ydl.extract_info(webpage_url, download=False)
+                if not entry:
+                    return None
+                stream_url = entry.get("url")
+
+            if not stream_url:
+                return None
+
             return {
                 "title": entry.get("title", query),
-                "url": entry.get("url"),
+                "url": stream_url,
                 "duration": entry.get("duration", 0),
                 "uploader": entry.get("uploader", "YouTube"),
                 "webpage_url": entry.get("webpage_url", ""),
