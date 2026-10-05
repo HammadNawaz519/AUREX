@@ -2,36 +2,6 @@
   "turns": [
     {
       "speaker": "AUREX",
-      "text": "ٹھیک ہے، میں انتظار کر رہا ہوں، حماد۔ ارام سے سوچ لو، کوئی جلدی نہیں۔",
-      "time": "04:48 PM"
-    },
-    {
-      "speaker": "User",
-      "text": "Mujhe jaise hi yaad aayega na woh gaana toh main bata dunga, thik hai?",
-      "time": "04:48 PM"
-    },
-    {
-      "speaker": "AUREX",
-      "text": "بالکل ٹھیک، کوئی مسئلہ نہیں۔ جب بھی یاد آ جائے، بتا دیجئے گا۔ میں پلے کر دوں گا۔",
-      "time": "04:48 PM"
-    },
-    {
-      "speaker": "User",
-      "text": "O Bala Gana Deewane Aanu Nasha Teri Deen Da",
-      "time": "04:48 PM"
-    },
-    {
-      "speaker": "AUREX",
-      "text": "یہ تو گڑبڑ ہو گئی، حماد۔ سسٹم کچھ ایرر کی وجہ سے وہ گانا پلے نہیں کر پا رہا۔ میں پھر سے کوشش کرتا ہوں، آپ بے فکر رہیں۔",
-      "time": "04:48 PM"
-    },
-    {
-      "speaker": "User",
-      "text": "Hello, sun paa rahe hain mujhe?",
-      "time": "04:49 PM"
-    },
-    {
-      "speaker": "AUREX",
       "text": "جی حماد، بالکل سن پا رہا ہوں۔ آپ سنائیں، کیا حال ہے؟ کیا وہ گانا یاد آگیا؟",
       "time": "04:49 PM"
     },
@@ -149,8 +119,38 @@
       "speaker": "AUREX",
       "text": "ٹھیک ہے حماد، میں بند ہو رہا ہوں۔ اللہ حافظ!",
       "time": "04:54 PM"
+    },
+    {
+      "speaker": "AUREX",
+      "text": "حماد، میں واپس آ گیا ہوں اور وہیں سے شروع کرنے کے لئے تیار ہوں جہاں چھوڑا تھا۔",
+      "time": "02:54 PM"
+    },
+    {
+      "speaker": "User",
+      "text": "GPT wala. Bade ho jao.",
+      "time": "02:54 PM"
+    },
+    {
+      "speaker": "User",
+      "text": "यह दे यह दे पेमेंट।",
+      "time": "02:54 PM"
+    },
+    {
+      "speaker": "User",
+      "text": "shrink सबसे पहले",
+      "time": "02:54 PM"
+    },
+    {
+      "speaker": "AUREX",
+      "text": "تصویر پر پیمنٹ کی معلومات نظر نہیں آ رہی، صرف کوڈنگ کا ماحول نظر آ رہا ہے۔ کیا آپ دوبارہ تصویر لینا چاہیں گے؟",
+      "time": "02:54 PM"
+    },
+    {
+      "speaker": "AUREX",
+      "text": "حماد، میں واپس آ گیا ہوں اور وہیں سے شروع کرنے کے لئے تیار ہوں جہاں چھوڑا تھا۔",
+      "time": "02:55 PM"
     }
   ],
-  "updated_at": "2026-10-04T16:54:54.939618",
+  "updated_at": "2026-10-05T14:55:04.275927",
   "last_language": "Urdu"
 }
