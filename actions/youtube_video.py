@@ -444,7 +444,7 @@ def youtube_video(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "youtube_video",
-    "description": "Controls YouTube. Use for: playing videos, summarizing a video's content, getting video info, or showing trending videos.",
+    "description": "Controls YouTube videos (non-music). Do NOT use this tool to play songs or music — use the 'songs' tool instead for music playback. Use this tool only for watching general videos, getting video summaries/transcripts, getting video info, or trending videos.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

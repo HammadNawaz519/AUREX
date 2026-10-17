@@ -14,6 +14,7 @@ Supported Actions:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -26,14 +27,14 @@ PLUGIN = {
     "name": "songs",
     "description": (
         "Plays full songs and controls music playback for the user via YouTube. "
-        "Use this tool when the user says 'play [song name]', "
-        "'play [song] by [artist]', 'pause music', 'resume music', "
-        "'stop music', 'next song', 'skip', 'previous song', "
+        "Use this tool when the user says 'play [song name]', 'search songs [query]', "
+        "'search song [query]', 'play [song] by [artist]', 'koi gana sunao', 'pause music', "
+        "'resume music', 'stop music', 'next song', 'skip', 'previous song', "
         "'what\\'s playing', 'current song', 'set volume to [number]', "
         "'volume up', or 'volume down'. "
         "This plugin streams and plays full tracks locally without any account "
         "or API keys needed. "
-        "Do NOT use web_search or open_browser to play music — always use "
+        "Do NOT use web_search, browser_control, or youtube_video to play music — always use "
         "this plugin instead."
     ),
     "parameters": {
@@ -42,15 +43,15 @@ PLUGIN = {
             "action": {
                 "type": "STRING",
                 "description": (
-                    "One of: play, pause, resume, stop, next, previous, "
+                    "One of: play, search, pause, resume, stop, next, previous, "
                     "current, volume"
                 ),
             },
             "query": {
                 "type": "STRING",
                 "description": (
-                    "Song name (and optionally artist) to search for "
-                    "(required for action=play)."
+                    "Song name and/or artist to search for "
+                    "(e.g. 'Arijit Singh top hits', 'Kesariya', etc.)."
                 ),
             },
             "volume": {
@@ -194,14 +195,20 @@ def _is_active() -> bool:
 def _do_play(query: Optional[str]) -> str:
     global _is_paused
 
-    if not query or not query.strip():
+    clean_q = (query or "").strip()
+    if not clean_q:
         if _is_paused and _is_active():
             return _do_resume()
-        return "Please specify what song you'd like to play."
+        clean_q = "top hit songs"
 
-    track = _search_and_extract(query.strip())
+    # Clean up generic phrases like "koi gana", "any song", "gana sunao"
+    for phrase in ("koi gana", "koi song", "any song", "a song", "some song", "gana sunao", "song sunao", "gaana sunao"):
+        if phrase in clean_q.lower():
+            clean_q = re.sub(phrase, "top hits", clean_q, flags=re.IGNORECASE).strip()
+
+    track = _search_and_extract(clean_q)
     if not track or not track.get("url"):
-        return f"Could not find any playable tracks for '{query}' on YouTube."
+        return f"Could not find any playable tracks for '{query or clean_q}' on YouTube."
 
     success = _start_playback(track["url"], track["title"], track.get("duration", 0))
     if success:
@@ -289,13 +296,17 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     query  = parameters.get("query")
     volume = parameters.get("volume")
 
-    if action == "play":
+    # Map aliases and search actions to play
+    if action in (
+        "play", "search", "search_song", "search_songs", "find",
+        "find_song", "listen", "start", "stream", "song", "play_song"
+    ):
         return _do_play(query)
-    elif action == "pause":
+    elif action in ("pause", "hold"):
         return _do_pause()
-    elif action == "resume":
+    elif action in ("resume", "unpause", "continue"):
         return _do_resume()
-    elif action in ("stop", "kill"):
+    elif action in ("stop", "kill", "end"):
         return _do_stop()
     elif action in ("next", "skip"):
         _do_stop()
@@ -304,9 +315,12 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         return "Track stopped. Tell me what song to play next."
     elif action == "previous":
         return "Previous track is not supported on single stream playback."
-    elif action in ("current", "now_playing", "whats_playing"):
+    elif action in ("current", "now_playing", "whats_playing", "playing"):
         return _do_current()
-    elif action == "volume":
+    elif action in ("volume", "set_volume"):
         return _do_volume(volume)
+    elif query:
+        # If action is unknown but a song query was provided, play it
+        return _do_play(query)
     else:
-        return f"Unknown action: '{action}'. Supported actions: play, pause, resume, stop, current, volume."
+        return f"Unknown action: '{action}'. Supported actions: play, search, pause, resume, stop, current, volume."
