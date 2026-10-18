@@ -617,10 +617,6 @@ class JarvisLive:
         self._current_live_model = DEFAULT_LIVE_MODEL
         self._internal_err_count = 0
         self._conn_backoff       = 2.0
-        # Gemini 3.x Live wants incremental user text through realtime input;
-        # send_client_content is only meant for seeding history there. Starts on
-        # the realtime path and falls back if the SDK does not support it.
-        self._text_via_realtime  = True
 
         # ── Discover tools ───────────────────────────────────────────────────
         # (This block used to sit inside _switch_fallback_model by an
@@ -681,48 +677,34 @@ class JarvisLive:
     # ── Text injection ───────────────────────────────────────────────────────
 
     async def _send_text(self, text: str) -> None:
-        """Inject a user text turn into the live session.
-
-        Realtime input first (what Gemini 3.x Live expects mid-conversation),
-        classic client-content turn as the fallback for SDKs/models that do not
-        accept it.
-        """
+        """Inject a user text turn into the live session and trigger model response."""
         sess = self.session
         if sess is None:
             return
-        if self._text_via_realtime:
-            try:
-                await sess.send_realtime_input(text=text)
-                return
-            except TypeError:
-                # SDK too old to know the `text=` argument.
-                self._text_via_realtime = False
-        await sess.send_client_content(
-            turns={"role": "user", "parts": [{"text": text}]},
-            turn_complete=True,
-        )
+        try:
+            await sess.send_client_content(
+                turns={"role": "user", "parts": [{"text": text}]},
+                turn_complete=True,
+            )
+        except Exception as e:
+            print(f"[AUREX] _send_text error: {e}")
 
     async def _send_image_turn(self, img_b: bytes, mime_t: str, text: str) -> None:
-        """Hand the model a captured frame plus its question as one exchange."""
+        """Hand the model a captured frame plus its question as one complete exchange."""
         sess = self.session
         if sess is None:
             return
-        if self._text_via_realtime:
-            try:
-                await sess.send_realtime_input(
-                    video=types.Blob(data=img_b, mime_type=mime_t))
-                await sess.send_realtime_input(text=text)
-                return
-            except TypeError:
-                self._text_via_realtime = False
-        b64 = base64.b64encode(img_b).decode("ascii")
-        await sess.send_client_content(
-            turns={"role": "user", "parts": [
-                {"inline_data": {"mime_type": mime_t, "data": b64}},
-                {"text": text},
-            ]},
-            turn_complete=True,
-        )
+        try:
+            b64 = base64.b64encode(img_b).decode("ascii")
+            await sess.send_client_content(
+                turns={"role": "user", "parts": [
+                    {"inline_data": {"mime_type": mime_t, "data": b64}},
+                    {"text": text},
+                ]},
+                turn_complete=True,
+            )
+        except Exception as e:
+            print(f"[AUREX] _send_image_turn error: {e}")
 
     # ── Wake word: state machine ─────────────────────────────────────────────
 
