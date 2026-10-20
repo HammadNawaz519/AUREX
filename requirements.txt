@@ -51,6 +51,13 @@ google-auth-oauthlib
 # ── Plugin extras: Tuya / Smart Life smart light (home_assistant) ─────────────
 tinytuya
 
+# ── Plugin extras: free full-track music playback (songs plugin) ──────────────
+# The songs plugin searches YouTube with yt-dlp and plays the downloaded audio
+# with ffplay. ffplay is NOT a pip package: it comes with ffmpeg. On Windows
+# the plugin downloads a portable build automatically on first use; on
+# macOS / Linux install ffmpeg yourself (brew/apt) so ffplay is on PATH.
+yt-dlp>=2024.4.9
+
 # ── Windows-only (pip skips these automatically on macOS / Linux) ─────────────
 comtypes;   sys_platform == "win32"
 pycaw;      sys_platform == "win32"
